@@ -1,0 +1,1 @@
+# MeckChat Android ProGuard Rules
