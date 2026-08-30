@@ -11,35 +11,43 @@ data class Device(
     var virtualIp: String? = null
 ) {
     fun toPresenceOnlineJson(): JSONObject {
-        return JSONObject().apply {
-            put("type", "presence_online")
-            put("protocol_version", 1)
-            put("device_id", deviceId)
-            put("display_name", displayName)
-            put("platform", platform.lowercase())
-            put("timestamp", System.currentTimeMillis() / 1000)
-        }
+        val json = JSONObject()
+        json.put("type", "presence_online")
+        json.put("protocol_version", 1)
+        json.put("device_id", deviceId)
+        json.put("display_name", displayName)
+        json.put("platform", platform.lowercase())
+        json.put("timestamp", System.currentTimeMillis() / 1000)
+        return json
+    }
+
+    fun toPresenceOnlineString(): String {
+        return "{\"type\":\"presence_online\",\"protocol_version\":1,\"device_id\":\"$deviceId\",\"display_name\":\"$displayName\",\"platform\":\"${platform.lowercase()}\",\"timestamp\":${System.currentTimeMillis() / 1000}}"
     }
 
     fun toPresenceOfflineJson(): JSONObject {
-        return JSONObject().apply {
-            put("type", "presence_offline")
-            put("device_id", deviceId)
-        }
+        val json = JSONObject()
+        json.put("type", "presence_offline")
+        json.put("device_id", deviceId)
+        return json
     }
 
     companion object {
         fun fromPresenceJson(json: JSONObject): Device? {
-            val id = json.optString("device_id")
+            val id = if (json.has("device_id")) json.getString("device_id") else return null
             if (id.isEmpty()) return null
 
-            val type = json.optString("type", "presence_online")
+            val type = if (json.has("type")) json.getString("type") else "presence_online"
+            val name = if (json.has("display_name")) json.getString("display_name") else "Unknown Device"
+            val plat = if (json.has("platform")) json.getString("platform") else "unknown"
+            val ts = if (json.has("timestamp")) json.getLong("timestamp") else (System.currentTimeMillis() / 1000)
+
             return Device(
                 deviceId = id,
-                displayName = json.optString("display_name", "Unknown Device"),
-                platform = json.optString("platform", "unknown"),
+                displayName = name,
+                platform = plat,
                 isOnline = (type == "presence_online"),
-                lastSeen = json.optLong("timestamp", System.currentTimeMillis() / 1000)
+                lastSeen = ts
             )
         }
     }
