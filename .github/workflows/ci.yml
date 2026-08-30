@@ -24,6 +24,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
+      - name: Ensure Executable Permissions
+        run: chmod +x gradlew
+
       - name: Run Unit Tests
         run: ./gradlew testDebugUnitTest
 
