@@ -28,19 +28,25 @@ data class Device(
     fun toPresenceOfflineJson(): JSONObject {
         val json = JSONObject()
         json.put("type", "presence_offline")
+        json.put("protocol_version", 1)
         json.put("device_id", deviceId)
+        json.put("timestamp", System.currentTimeMillis() / 1000)
         return json
+    }
+
+    fun toPresenceOfflineString(): String {
+        return toPresenceOfflineJson().toString()
     }
 
     companion object {
         fun fromPresenceJson(json: JSONObject): Device? {
-            val id = if (json.has("device_id")) json.getString("device_id") else return null
+            val id = if (json.has("device_id")) json.optString("device_id") else return null
             if (id.isEmpty()) return null
 
-            val type = if (json.has("type")) json.getString("type") else "presence_online"
-            val name = if (json.has("display_name")) json.getString("display_name") else "Unknown Device"
-            val plat = if (json.has("platform")) json.getString("platform") else "unknown"
-            val ts = if (json.has("timestamp")) json.getLong("timestamp") else (System.currentTimeMillis() / 1000)
+            val type = json.optString("type", "presence_online")
+            val name = json.optString("display_name", "Unknown Device")
+            val plat = json.optString("platform", "unknown")
+            val ts = json.optLong("timestamp", System.currentTimeMillis() / 1000)
 
             return Device(
                 deviceId = id,
@@ -49,6 +55,15 @@ data class Device(
                 isOnline = (type == "presence_online"),
                 lastSeen = ts
             )
+        }
+
+        fun fromJsonString(jsonStr: String): Device? {
+            return try {
+                val json = JSONObject(jsonStr)
+                fromPresenceJson(json)
+            } catch (e: Exception) {
+                null
+            }
         }
     }
 }
