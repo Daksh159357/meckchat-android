@@ -15,8 +15,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Connect to MQTT Broker for signaling/discovery
-        MqttSignalingManager.instance.connect()
+        // Ensure MQTT connection is active
+        if (!MqttSignalingManager.instance.isConnected()) {
+            MqttSignalingManager.instance.connect()
+        }
 
         setContent {
             MeckChatTheme {
@@ -30,8 +32,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        MqttSignalingManager.instance.disconnect()
+    override fun onResume() {
+        super.onResume()
+        // Ensure connection is active when returning to foreground
+        if (!MqttSignalingManager.instance.isConnected()) {
+            MqttSignalingManager.instance.connect()
+        }
     }
 }

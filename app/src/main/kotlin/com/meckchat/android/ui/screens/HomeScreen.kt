@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +48,7 @@ fun HomeScreen(
     signalingManager: MqttSignalingManager = MqttSignalingManager.instance
 ) {
     val connectionState by signalingManager.connectionState.collectAsState()
+    val errorMessage by signalingManager.errorMessage.collectAsState()
     val discoveredDevices by signalingManager.discoveredDevices.collectAsState()
     val myDevice = signalingManager.getCurrentDevice()
 
@@ -88,7 +88,8 @@ fun HomeScreen(
                                 ConnectionState.CONNECTED -> Color(0xFF4CAF50) to "MQTT Connected"
                                 ConnectionState.CONNECTING -> Color(0xFFFF9800) to "MQTT Connecting..."
                                 ConnectionState.RECONNECTING -> Color(0xFFFF9800) to "MQTT Reconnecting..."
-                                ConnectionState.DISCONNECTED -> Color(0xFFE53935) to "MQTT Disconnected"
+                                ConnectionState.ERROR -> Color(0xFFE53935) to "MQTT Error"
+                                ConnectionState.DISCONNECTED -> Color(0xFF757575) to "MQTT Disconnected"
                             }
 
                             Box(
@@ -107,7 +108,7 @@ fun HomeScreen(
 
                         OutlinedButton(
                             onClick = {
-                                if (connectionState == ConnectionState.DISCONNECTED) {
+                                if (connectionState == ConnectionState.DISCONNECTED || connectionState == ConnectionState.ERROR) {
                                     signalingManager.connect()
                                 } else {
                                     signalingManager.broadcastDiscovery()
@@ -120,8 +121,22 @@ fun HomeScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (connectionState == ConnectionState.DISCONNECTED) "Connect" else "Discover")
+                            val buttonText = when (connectionState) {
+                                ConnectionState.DISCONNECTED -> "Connect"
+                                ConnectionState.ERROR -> "Retry"
+                                else -> "Discover"
+                            }
+                            Text(buttonText)
                         }
+                    }
+
+                    if (errorMessage != null && (connectionState == ConnectionState.ERROR || connectionState == ConnectionState.RECONNECTING)) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Error: $errorMessage",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))

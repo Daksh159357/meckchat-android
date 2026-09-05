@@ -18,13 +18,15 @@ import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
+import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
 
 enum class ConnectionState {
     DISCONNECTED,
     CONNECTING,
     CONNECTED,
-    RECONNECTING
+    RECONNECTING,
+    ERROR
 }
 
 class MqttSignalingManager(
@@ -47,6 +49,9 @@ class MqttSignalingManager(
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
     private val _discoveredDevicesMap = MutableStateFlow<Map<String, Device>>(emptyMap())
     private val _discoveredDevices = MutableStateFlow<List<Device>>(emptyList())
@@ -71,8 +76,13 @@ class MqttSignalingManager(
         port: Int = appConfig.mqttBrokerPort,
         device: Device = getCurrentDevice()
     ) {
-        if (mqttClient != null && (mqttClient!!.isConnected || _connectionState.value == ConnectionState.CONNECTING)) {
-            Logger.info(TAG, "MQTT client is already connected or connecting.")
+        if (mqttClient != null && mqttClient!!.isConnected && _connectionState.value == ConnectionState.CONNECTED) {
+            Logger.info(TAG, "MQTT client is already connected.")
+            return
+        }
+
+        if (_connectionState.value == ConnectionState.CONNECTING) {
+            Logger.info(TAG, "MQTT client is already connecting...")
             return
         }
 
@@ -80,7 +90,9 @@ class MqttSignalingManager(
         val clientId = "${device.deviceId}_${System.currentTimeMillis() % 100000}"
 
         _connectionState.value = ConnectionState.CONNECTING
-        Logger.info(TAG, "MQTT connecting...")
+        _errorMessage.value = null
+        Logger.info(TAG, "MQTT initializing")
+        Logger.info(TAG, "MQTT connecting to $brokerHost:$port")
 
         try {
             mqttClient?.let {
@@ -93,16 +105,15 @@ class MqttSignalingManager(
             mqttClient = MqttAsyncClient(serverUri, clientId, persistence)
             mqttClient?.setCallback(object : MqttCallbackExtended {
                 override fun connectComplete(reconnect: Boolean, serverURI: String?) {
-                    _connectionState.value = ConnectionState.CONNECTED
-                    Logger.info(TAG, "MQTT connected")
-
-                    subscribeToTopics()
-                    publishPresence(device)
+                    Logger.info(TAG, "MQTT connected (connectComplete, reconnect=$reconnect)")
+                    handleSuccessfulConnection(device)
                 }
 
                 override fun connectionLost(cause: Throwable?) {
+                    val causeMsg = cause?.localizedMessage ?: cause?.message ?: "Connection lost"
                     _connectionState.value = ConnectionState.RECONNECTING
-                    Logger.warning(TAG, "MQTT reconnecting...")
+                    _errorMessage.value = causeMsg
+                    Logger.warning(TAG, "MQTT reconnecting ($causeMsg)")
                 }
 
                 override fun messageArrived(topic: String?, message: MqttMessage?) {
@@ -114,12 +125,15 @@ class MqttSignalingManager(
                 override fun deliveryComplete(token: IMqttDeliveryToken?) {}
             })
 
+            val sslContext = SSLContext.getInstance("TLS")
+            sslContext.init(null, null, null)
+
             val options = MqttConnectOptions().apply {
                 isAutomaticReconnect = true
                 isCleanSession = true
-                connectionTimeout = 15
-                keepAliveInterval = 30
-                socketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+                connectionTimeout = 20
+                keepAliveInterval = 45
+                socketFactory = sslContext.socketFactory
 
                 val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
                 setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
@@ -127,24 +141,45 @@ class MqttSignalingManager(
 
             mqttClient?.connect(options, null, object : IMqttActionListener {
                 override fun onSuccess(asyncActionToken: IMqttToken?) {
-                    Logger.info(TAG, "MQTT initial connection request succeeded")
+                    Logger.info(TAG, "MQTT connected (initial connect onSuccess)")
+                    handleSuccessfulConnection(device)
                 }
 
                 override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                    _connectionState.value = ConnectionState.DISCONNECTED
-                    Logger.error(TAG, "MQTT connection failed: ${exception?.message}", exception)
+                    val errorMsg = exception?.localizedMessage ?: exception?.message ?: "Connection failed"
+                    _connectionState.value = ConnectionState.ERROR
+                    _errorMessage.value = errorMsg
+                    Logger.error(TAG, "MQTT connection error: $errorMsg", exception)
                 }
             })
 
         } catch (e: Exception) {
-            _connectionState.value = ConnectionState.DISCONNECTED
-            Logger.error(TAG, "Error initializing MQTT connection: ${e.message}", e)
+            val errorMsg = e.localizedMessage ?: e.message ?: "Failed to initialize MQTT"
+            _connectionState.value = ConnectionState.ERROR
+            _errorMessage.value = errorMsg
+            Logger.error(TAG, "MQTT connection error: $errorMsg", e)
         }
     }
 
+    @Synchronized
+    private fun handleSuccessfulConnection(device: Device) {
+        _connectionState.value = ConnectionState.CONNECTED
+        _errorMessage.value = null
+        Logger.info(TAG, "MQTT connected")
+
+        subscribeToTopics()
+        publishPresence(device)
+        broadcastDiscovery()
+    }
+
     private fun subscribeToTopics() {
-        val client = mqttClient ?: return
+        val client = mqttClient
+        if (client == null || !client.isConnected) {
+            Logger.warning(TAG, "Cannot subscribe: MQTT client not connected")
+            return
+        }
         try {
+            Logger.info(TAG, "MQTT subscribing")
             val topics = arrayOf(
                 TOPIC_DISCOVERY,
                 "$TOPIC_PRESENCE_ONLINE_PREFIX+",
@@ -203,7 +238,7 @@ class MqttSignalingManager(
 
             val msg = MqttMessage(reqPayload).apply { qos = 1 }
             client.publish(TOPIC_DISCOVERY, msg)
-            Logger.debug(TAG, "Broadcasting discovery for: ${myDevice.deviceId}")
+            Logger.info(TAG, "MQTT discovery published")
 
             publishPresence(myDevice)
         } catch (e: Exception) {
@@ -292,6 +327,7 @@ class MqttSignalingManager(
             }
         }
         _connectionState.value = ConnectionState.DISCONNECTED
+        _errorMessage.value = null
         Logger.info(TAG, "MQTT disconnected")
     }
 }
