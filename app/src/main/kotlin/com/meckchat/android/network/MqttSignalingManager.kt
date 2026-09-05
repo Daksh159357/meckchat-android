@@ -19,7 +19,6 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocketFactory
 
 enum class ConnectionState {
     DISCONNECTED,
@@ -169,15 +168,10 @@ class MqttSignalingManager(
 
         subscribeToTopics()
         publishPresence(device)
-        broadcastDiscovery()
     }
 
     private fun subscribeToTopics() {
-        val client = mqttClient
-        if (client == null || !client.isConnected) {
-            Logger.warning(TAG, "Cannot subscribe: MQTT client not connected")
-            return
-        }
+        val client = mqttClient ?: return
         try {
             Logger.info(TAG, "MQTT subscribing")
             val topics = arrayOf(
@@ -202,12 +196,7 @@ class MqttSignalingManager(
     }
 
     fun publishPresence(device: Device = getCurrentDevice()) {
-        val client = mqttClient
-        if (client == null || !client.isConnected) {
-            Logger.warning(TAG, "Cannot publish presence: MQTT not connected")
-            return
-        }
-
+        val client = mqttClient ?: return
         try {
             val payload = device.toPresenceOnlineString().toByteArray(StandardCharsets.UTF_8)
             val onlineTopic = getPresenceOnlineTopic(device.deviceId)
@@ -225,12 +214,7 @@ class MqttSignalingManager(
     }
 
     fun broadcastDiscovery() {
-        val client = mqttClient
-        if (client == null || !client.isConnected) {
-            Logger.warning(TAG, "Cannot broadcast discovery: MQTT not connected")
-            return
-        }
-
+        val client = mqttClient ?: return
         try {
             val myDevice = getCurrentDevice()
             val request = DiscoveryRequest(deviceId = myDevice.deviceId)
