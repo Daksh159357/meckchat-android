@@ -8,8 +8,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 class RealMqttBrokerIntegrationTest {
 
@@ -44,9 +42,9 @@ class RealMqttBrokerIntegrationTest {
             // 1. Connect Device A
             managerA.connect(configA.mqttBrokerHost, configA.mqttBrokerPort, managerA.getCurrentDevice())
 
-            // Wait for A to connect
+            // Wait for A to connect (up to 15s)
             val startTimeA = System.currentTimeMillis()
-            while (!managerA.isConnected() && (System.currentTimeMillis() - startTimeA < 10000)) {
+            while (!managerA.isConnected() && (System.currentTimeMillis() - startTimeA < 15000)) {
                 Thread.sleep(200)
             }
             assertTrue("Device A should connect to HiveMQ broker over TLS", managerA.isConnected())
@@ -55,24 +53,24 @@ class RealMqttBrokerIntegrationTest {
             // 2. Connect Device B
             managerB.connect(configB.mqttBrokerHost, configB.mqttBrokerPort, managerB.getCurrentDevice())
 
-            // Wait for B to connect
+            // Wait for B to connect (up to 15s)
             val startTimeB = System.currentTimeMillis()
-            while (!managerB.isConnected() && (System.currentTimeMillis() - startTimeB < 10000)) {
+            while (!managerB.isConnected() && (System.currentTimeMillis() - startTimeB < 15000)) {
                 Thread.sleep(200)
             }
             assertTrue("Device B should connect to HiveMQ broker over TLS", managerB.isConnected())
             Logger.info("IntegrationTest", "Device B successfully connected over TLS!")
 
             // Allow subscriptions to register
-            Thread.sleep(1500)
+            Thread.sleep(2000)
 
             // 3. Device A broadcasts discovery
             managerA.broadcastDiscovery()
 
-            // Wait for Device B to discover Device A
+            // Wait for Device B to discover Device A (up to 15s)
             val startDiscoveryB = System.currentTimeMillis()
             while (!managerB.discoveredDevices.value.any { it.deviceId == deviceIdA } &&
-                (System.currentTimeMillis() - startDiscoveryB < 10000)) {
+                (System.currentTimeMillis() - startDiscoveryB < 15000)) {
                 Thread.sleep(200)
             }
 
@@ -85,10 +83,10 @@ class RealMqttBrokerIntegrationTest {
             // 4. Device B broadcasts discovery
             managerB.broadcastDiscovery()
 
-            // Wait for Device A to discover Device B
+            // Wait for Device A to discover Device B (up to 15s)
             val startDiscoveryA = System.currentTimeMillis()
             while (!managerA.discoveredDevices.value.any { it.deviceId == deviceIdB } &&
-                (System.currentTimeMillis() - startDiscoveryA < 10000)) {
+                (System.currentTimeMillis() - startDiscoveryA < 15000)) {
                 Thread.sleep(200)
             }
 

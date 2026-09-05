@@ -18,7 +18,7 @@ import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
-import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocketFactory
 
 enum class ConnectionState {
     DISCONNECTED,
@@ -105,7 +105,10 @@ class MqttSignalingManager(
             mqttClient?.setCallback(object : MqttCallbackExtended {
                 override fun connectComplete(reconnect: Boolean, serverURI: String?) {
                     Logger.info(TAG, "MQTT connected (connectComplete, reconnect=$reconnect)")
-                    handleSuccessfulConnection(device)
+                    _connectionState.value = ConnectionState.CONNECTED
+                    _errorMessage.value = null
+                    subscribeToTopics()
+                    publishPresence(device)
                 }
 
                 override fun connectionLost(cause: Throwable?) {
@@ -124,15 +127,12 @@ class MqttSignalingManager(
                 override fun deliveryComplete(token: IMqttDeliveryToken?) {}
             })
 
-            val sslContext = SSLContext.getInstance("TLS")
-            sslContext.init(null, null, null)
-
             val options = MqttConnectOptions().apply {
                 isAutomaticReconnect = true
                 isCleanSession = true
-                connectionTimeout = 20
-                keepAliveInterval = 45
-                socketFactory = sslContext.socketFactory
+                connectionTimeout = 30
+                keepAliveInterval = 60
+                socketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
 
                 val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
                 setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
@@ -141,7 +141,12 @@ class MqttSignalingManager(
             mqttClient?.connect(options, null, object : IMqttActionListener {
                 override fun onSuccess(asyncActionToken: IMqttToken?) {
                     Logger.info(TAG, "MQTT connected (initial connect onSuccess)")
-                    handleSuccessfulConnection(device)
+                    if (_connectionState.value != ConnectionState.CONNECTED) {
+                        _connectionState.value = ConnectionState.CONNECTED
+                        _errorMessage.value = null
+                        subscribeToTopics()
+                        publishPresence(device)
+                    }
                 }
 
                 override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
@@ -158,16 +163,6 @@ class MqttSignalingManager(
             _errorMessage.value = errorMsg
             Logger.error(TAG, "MQTT connection error: $errorMsg", e)
         }
-    }
-
-    @Synchronized
-    private fun handleSuccessfulConnection(device: Device) {
-        _connectionState.value = ConnectionState.CONNECTED
-        _errorMessage.value = null
-        Logger.info(TAG, "MQTT connected")
-
-        subscribeToTopics()
-        publishPresence(device)
     }
 
     private fun subscribeToTopics() {
