@@ -218,7 +218,6 @@ class MqttSignalingManager(
                 _errorMessage.value = errorMsg
                 Logger.error(TAG, "MQTT connection error: $errorMsg", e)
             }
-        }.start()
     }
 
     private fun subscribeToTopics() {
