@@ -49,7 +49,7 @@ class IPv4FallbackSSLSocketFactory : SSLSocketFactory() {
     private fun resolveAddress(host: String): InetAddress {
         return try {
             val addresses = InetAddress.getAllByName(host)
-            // Prefer IPv4 because HiveMQ public broker only listens on IPv4 for port 8883
+            // Prefer IPv4 because HiveMQ public broker port 8883 only listens on IPv4
             addresses.firstOrNull { it is Inet4Address } ?: addresses.first()
         } catch (e: Exception) {
             InetAddress.getByName(host)
@@ -64,14 +64,16 @@ class IPv4FallbackSSLSocketFactory : SSLSocketFactory() {
 
     override fun createSocket(host: String, port: Int): Socket {
         val targetAddress = resolveAddress(host)
-        val socket = delegate.createSocket(targetAddress, port)
+        val plainSocket = Socket(targetAddress, port)
+        val socket = delegate.createSocket(plainSocket, host, port, true)
         setSniHostName(socket, host)
         return socket
     }
 
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket {
         val targetAddress = resolveAddress(host)
-        val socket = delegate.createSocket(targetAddress, port, localHost, localPort)
+        val plainSocket = Socket(targetAddress, port, localHost, localPort)
+        val socket = delegate.createSocket(plainSocket, host, port, true)
         setSniHostName(socket, host)
         return socket
     }
