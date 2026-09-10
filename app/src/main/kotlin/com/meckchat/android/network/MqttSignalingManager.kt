@@ -34,48 +34,35 @@ enum class ConnectionState {
     ERROR
 }
 
-class IPv4FallbackSSLSocketFactory : SSLSocketFactory() {
-    private val delegate: SSLSocketFactory
-
-    init {
-        val sslContext = SSLContext.getInstance("TLS")
-        sslContext.init(null, null, null)
-        delegate = sslContext.socketFactory
-    }
-
+class IPv4SSLSocketFactory(
+    private val delegate: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+) : SSLSocketFactory() {
     override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
     override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
 
-    private fun resolveAddress(host: String): InetAddress {
+    private fun resolveIPv4(host: String): InetAddress {
         return try {
             val addresses = InetAddress.getAllByName(host)
-            // Prefer IPv4 because HiveMQ public broker port 8883 only listens on IPv4
             addresses.firstOrNull { it is Inet4Address } ?: addresses.first()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             InetAddress.getByName(host)
         }
     }
 
+    override fun createSocket(): Socket = delegate.createSocket()
+
     override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket {
-        val socket = delegate.createSocket(s, host, port, autoClose)
-        setSniHostName(socket, host)
-        return socket
+        return delegate.createSocket(s, host, port, autoClose)
     }
 
     override fun createSocket(host: String, port: Int): Socket {
-        val targetAddress = resolveAddress(host)
-        val plainSocket = Socket(targetAddress, port)
-        val socket = delegate.createSocket(plainSocket, host, port, true)
-        setSniHostName(socket, host)
-        return socket
+        val inetAddress = resolveIPv4(host)
+        return delegate.createSocket(inetAddress, port)
     }
 
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket {
-        val targetAddress = resolveAddress(host)
-        val plainSocket = Socket(targetAddress, port, localHost, localPort)
-        val socket = delegate.createSocket(plainSocket, host, port, true)
-        setSniHostName(socket, host)
-        return socket
+        val inetAddress = resolveIPv4(host)
+        return delegate.createSocket(inetAddress, port, localHost, localPort)
     }
 
     override fun createSocket(host: InetAddress, port: Int): Socket {
@@ -84,16 +71,6 @@ class IPv4FallbackSSLSocketFactory : SSLSocketFactory() {
 
     override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket {
         return delegate.createSocket(address, port, localAddress, localPort)
-    }
-
-    private fun setSniHostName(socket: Socket, host: String) {
-        if (socket is SSLSocket) {
-            try {
-                val params = socket.sslParameters
-                params.serverNames = listOf(SNIHostName(host))
-                socket.sslParameters = params
-            } catch (_: Throwable) {}
-        }
     }
 }
 
@@ -201,7 +178,7 @@ class MqttSignalingManager(
                 isCleanSession = true
                 connectionTimeout = 30
                 keepAliveInterval = 60
-                socketFactory = IPv4FallbackSSLSocketFactory()
+                socketFactory = IPv4SSLSocketFactory()
 
                 val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
                 setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
