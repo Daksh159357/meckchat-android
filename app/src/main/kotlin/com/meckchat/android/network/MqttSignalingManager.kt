@@ -51,7 +51,24 @@ class IPv4SSLSocketFactory(
         }
     }
 
-    override fun createSocket(): Socket = delegate.createSocket()
+    override fun createSocket(): Socket {
+        return object : Socket() {
+            override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                if (endpoint is InetSocketAddress) {
+                    val host = endpoint.hostName ?: endpoint.hostString
+                    val targetAddress = if (!host.isNullOrEmpty()) {
+                        getIPv4Address(host)
+                    } else {
+                        endpoint.address
+                    }
+                    val ipv4Endpoint = InetSocketAddress(targetAddress, endpoint.port)
+                    super.connect(ipv4Endpoint, timeout)
+                } else {
+                    super.connect(endpoint, timeout)
+                }
+            }
+        }
+    }
 
     override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket {
         val socket = delegate.createSocket(s, host, port, autoClose)
