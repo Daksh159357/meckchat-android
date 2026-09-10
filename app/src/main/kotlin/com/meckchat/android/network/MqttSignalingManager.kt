@@ -35,43 +35,31 @@ enum class ConnectionState {
 }
 
 class IPv4SSLSocketFactory(
+    private val expectedHost: String = "broker.hivemq.com",
     private val delegate: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
 ) : SSLSocketFactory() {
     override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
     override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
 
-    private fun resolveIPv4(host: String): InetAddress {
-        return try {
-            val addresses = InetAddress.getAllByName(host)
-            addresses.firstOrNull { it is Inet4Address } ?: addresses.first()
-        } catch (_: Exception) {
-            InetAddress.getByName(host)
-        }
-    }
-
     override fun createSocket(): Socket = delegate.createSocket()
 
     override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket {
-        return delegate.createSocket(s, host, port, autoClose)
+        val socket = delegate.createSocket(s, host, port, autoClose)
+        if (socket is SSLSocket) {
+            try {
+                val params = socket.sslParameters
+                val sni = if (host.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) expectedHost else host
+                params.serverNames = listOf(SNIHostName(sni))
+                socket.sslParameters = params
+            } catch (_: Throwable) {}
+        }
+        return socket
     }
 
-    override fun createSocket(host: String, port: Int): Socket {
-        val inetAddress = resolveIPv4(host)
-        return delegate.createSocket(inetAddress, port)
-    }
-
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket {
-        val inetAddress = resolveIPv4(host)
-        return delegate.createSocket(inetAddress, port, localHost, localPort)
-    }
-
-    override fun createSocket(host: InetAddress, port: Int): Socket {
-        return delegate.createSocket(host, port)
-    }
-
-    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket {
-        return delegate.createSocket(address, port, localAddress, localPort)
-    }
+    override fun createSocket(host: String, port: Int): Socket = delegate.createSocket(host, port)
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = delegate.createSocket(host, port, localHost, localPort)
+    override fun createSocket(host: InetAddress, port: Int): Socket = delegate.createSocket(host, port)
+    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket = delegate.createSocket(address, port, localAddress, localPort)
 }
 
 class MqttSignalingManager(
@@ -115,7 +103,6 @@ class MqttSignalingManager(
         )
     }
 
-    @Synchronized
     fun connect(
         brokerHost: String = appConfig.mqttBrokerHost,
         port: Int = appConfig.mqttBrokerPort,
@@ -131,84 +118,98 @@ class MqttSignalingManager(
             return
         }
 
-        val serverUri = "ssl://$brokerHost:$port"
-        val clientId = "${device.deviceId}_${System.currentTimeMillis() % 100000}"
-
         _connectionState.value = ConnectionState.CONNECTING
         _errorMessage.value = null
         Logger.info(TAG, "MQTT initializing")
         Logger.info(TAG, "MQTT connecting to $brokerHost:$port")
 
-        try {
-            mqttClient?.let {
-                try {
-                    it.disconnectForcibly(1000, 1000, false)
-                    it.close()
-                } catch (_: Exception) {}
-            }
-
-            mqttClient = MqttAsyncClient(serverUri, clientId, persistence)
-            mqttClient?.setCallback(object : MqttCallbackExtended {
-                override fun connectComplete(reconnect: Boolean, serverURI: String?) {
-                    Logger.info(TAG, "MQTT connected (connectComplete, reconnect=$reconnect)")
-                    _connectionState.value = ConnectionState.CONNECTED
-                    _errorMessage.value = null
-                    subscribeToTopics()
-                    publishPresence(device)
+        Thread {
+            try {
+                val targetHost = try {
+                    val addresses = InetAddress.getAllByName(brokerHost)
+                    addresses.firstOrNull { it is Inet4Address }?.hostAddress ?: addresses.firstOrNull()?.hostAddress ?: brokerHost
+                } catch (e: Exception) {
+                    Logger.warning(TAG, "DNS resolution fallback to host: ${e.message}")
+                    brokerHost
                 }
 
-                override fun connectionLost(cause: Throwable?) {
-                    val causeMsg = cause?.localizedMessage ?: cause?.message ?: "Connection lost"
-                    _connectionState.value = ConnectionState.RECONNECTING
-                    _errorMessage.value = causeMsg
-                    Logger.warning(TAG, "MQTT reconnecting ($causeMsg)")
+                Logger.info(TAG, "MQTT resolved $brokerHost to $targetHost")
+                val serverUri = "ssl://$targetHost:$port"
+                val clientId = "${device.deviceId}_${System.currentTimeMillis() % 100000}"
+
+                synchronized(this) {
+                    mqttClient?.let {
+                        try {
+                            it.disconnectForcibly(1000, 1000, false)
+                            it.close()
+                        } catch (_: Exception) {}
+                    }
+
+                    mqttClient = MqttAsyncClient(serverUri, clientId, persistence)
                 }
 
-                override fun messageArrived(topic: String?, message: MqttMessage?) {
-                    if (topic == null || message == null) return
-                    val payload = String(message.payload, StandardCharsets.UTF_8)
-                    handleIncomingMessage(topic, payload)
-                }
-
-                override fun deliveryComplete(token: IMqttDeliveryToken?) {}
-            })
-
-            val options = MqttConnectOptions().apply {
-                isAutomaticReconnect = true
-                isCleanSession = true
-                connectionTimeout = 30
-                keepAliveInterval = 60
-                socketFactory = IPv4SSLSocketFactory()
-
-                val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
-                setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
-            }
-
-            mqttClient?.connect(options, null, object : IMqttActionListener {
-                override fun onSuccess(asyncActionToken: IMqttToken?) {
-                    Logger.info(TAG, "MQTT connected (initial connect onSuccess)")
-                    if (_connectionState.value != ConnectionState.CONNECTED) {
+                mqttClient?.setCallback(object : MqttCallbackExtended {
+                    override fun connectComplete(reconnect: Boolean, serverURI: String?) {
+                        Logger.info(TAG, "MQTT connected (connectComplete, reconnect=$reconnect)")
                         _connectionState.value = ConnectionState.CONNECTED
                         _errorMessage.value = null
                         subscribeToTopics()
                         publishPresence(device)
                     }
+
+                    override fun connectionLost(cause: Throwable?) {
+                        val causeMsg = cause?.localizedMessage ?: cause?.message ?: "Connection lost"
+                        _connectionState.value = ConnectionState.RECONNECTING
+                        _errorMessage.value = causeMsg
+                        Logger.warning(TAG, "MQTT reconnecting ($causeMsg)")
+                    }
+
+                    override fun messageArrived(topic: String?, message: MqttMessage?) {
+                        if (topic == null || message == null) return
+                        val payload = String(message.payload, StandardCharsets.UTF_8)
+                        handleIncomingMessage(topic, payload)
+                    }
+
+                    override fun deliveryComplete(token: IMqttDeliveryToken?) {}
+                })
+
+                val options = MqttConnectOptions().apply {
+                    isAutomaticReconnect = true
+                    isCleanSession = true
+                    connectionTimeout = 30
+                    keepAliveInterval = 60
+                    socketFactory = IPv4SSLSocketFactory(expectedHost = brokerHost)
+
+                    val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
+                    setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
                 }
 
-                override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                    val errorMsg = exception?.localizedMessage ?: exception?.message ?: "Connection failed"
-                    _connectionState.value = ConnectionState.ERROR
-                    _errorMessage.value = errorMsg
-                    Logger.error(TAG, "MQTT connection error: $errorMsg", exception)
-                }
-            })
+                mqttClient?.connect(options, null, object : IMqttActionListener {
+                    override fun onSuccess(asyncActionToken: IMqttToken?) {
+                        Logger.info(TAG, "MQTT connected (initial connect onSuccess)")
+                        if (_connectionState.value != ConnectionState.CONNECTED) {
+                            _connectionState.value = ConnectionState.CONNECTED
+                            _errorMessage.value = null
+                            subscribeToTopics()
+                            publishPresence(device)
+                        }
+                    }
 
-        } catch (e: Exception) {
-            val errorMsg = e.localizedMessage ?: e.message ?: "Failed to initialize MQTT"
-            _connectionState.value = ConnectionState.ERROR
-            _errorMessage.value = errorMsg
-            Logger.error(TAG, "MQTT connection error: $errorMsg", e)
-        }
+                    override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
+                        val errorMsg = exception?.localizedMessage ?: exception?.message ?: "Connection failed"
+                        _connectionState.value = ConnectionState.ERROR
+                        _errorMessage.value = errorMsg
+                        Logger.error(TAG, "MQTT connection error: $errorMsg", exception)
+                    }
+                })
+
+            } catch (e: Exception) {
+                val errorMsg = e.localizedMessage ?: e.message ?: "Failed to initialize MQTT"
+                _connectionState.value = ConnectionState.ERROR
+                _errorMessage.value = errorMsg
+                Logger.error(TAG, "MQTT connection error: $errorMsg", e)
+            }
+        }.start()
     }
 
     private fun subscribeToTopics() {
