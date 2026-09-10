@@ -42,23 +42,23 @@ class RealMqttBrokerIntegrationTest {
             // 1. Connect Device A
             managerA.connect(configA.mqttBrokerHost, configA.mqttBrokerPort, managerA.getCurrentDevice())
 
-            // Wait for A to connect (up to 15s)
+            // Wait for A to connect (up to 20s)
             val startTimeA = System.currentTimeMillis()
-            while (!managerA.isConnected() && (System.currentTimeMillis() - startTimeA < 15000)) {
+            while (!managerA.isConnected() && (System.currentTimeMillis() - startTimeA < 20000)) {
                 Thread.sleep(200)
             }
-            assertTrue("Device A should connect to HiveMQ broker over TLS", managerA.isConnected())
+            assertTrue("Device A should connect to HiveMQ broker over TLS. State: ${managerA.connectionState.value}, Error: ${managerA.errorMessage.value}", managerA.isConnected())
             Logger.info("IntegrationTest", "Device A successfully connected over TLS!")
 
             // 2. Connect Device B
             managerB.connect(configB.mqttBrokerHost, configB.mqttBrokerPort, managerB.getCurrentDevice())
 
-            // Wait for B to connect (up to 15s)
+            // Wait for B to connect (up to 20s)
             val startTimeB = System.currentTimeMillis()
-            while (!managerB.isConnected() && (System.currentTimeMillis() - startTimeB < 15000)) {
+            while (!managerB.isConnected() && (System.currentTimeMillis() - startTimeB < 20000)) {
                 Thread.sleep(200)
             }
-            assertTrue("Device B should connect to HiveMQ broker over TLS", managerB.isConnected())
+            assertTrue("Device B should connect to HiveMQ broker over TLS. State: ${managerB.connectionState.value}, Error: ${managerB.errorMessage.value}", managerB.isConnected())
             Logger.info("IntegrationTest", "Device B successfully connected over TLS!")
 
             // Allow subscriptions to register

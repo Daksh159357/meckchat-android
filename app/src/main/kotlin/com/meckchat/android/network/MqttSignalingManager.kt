@@ -42,26 +42,16 @@ class IPv4SSLSocketFactory(
     override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
     override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
 
-    override fun createSocket(): Socket {
-        return object : Socket() {
-            override fun connect(endpoint: SocketAddress?, timeout: Int) {
-                if (endpoint is InetSocketAddress) {
-                    val host = endpoint.hostString ?: endpoint.hostName
-                    val port = endpoint.port
-                    val targetAddress = try {
-                        val addresses = InetAddress.getAllByName(host)
-                        addresses.firstOrNull { it is Inet4Address } ?: addresses.firstOrNull() ?: endpoint.address
-                    } catch (_: Exception) {
-                        endpoint.address
-                    }
-                    val ipv4Endpoint = InetSocketAddress(targetAddress, port)
-                    super.connect(ipv4Endpoint, timeout)
-                } else {
-                    super.connect(endpoint, timeout)
-                }
-            }
+    private fun getIPv4Address(host: String): InetAddress {
+        return try {
+            val addrs = InetAddress.getAllByName(host)
+            addrs.firstOrNull { it is Inet4Address } ?: addrs.first()
+        } catch (_: Exception) {
+            InetAddress.getByName(host)
         }
     }
+
+    override fun createSocket(): Socket = delegate.createSocket()
 
     override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket {
         val socket = delegate.createSocket(s, host, port, autoClose)
@@ -75,8 +65,32 @@ class IPv4SSLSocketFactory(
         return socket
     }
 
-    override fun createSocket(host: String, port: Int): Socket = delegate.createSocket(host, port)
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = delegate.createSocket(host, port, localHost, localPort)
+    override fun createSocket(host: String, port: Int): Socket {
+        val ipv4 = getIPv4Address(host)
+        val socket = delegate.createSocket(ipv4, port)
+        if (socket is SSLSocket) {
+            try {
+                val params = socket.sslParameters
+                params.serverNames = listOf(SNIHostName(host))
+                socket.sslParameters = params
+            } catch (_: Throwable) {}
+        }
+        return socket
+    }
+
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket {
+        val ipv4 = getIPv4Address(host)
+        val socket = delegate.createSocket(ipv4, port, localHost, localPort)
+        if (socket is SSLSocket) {
+            try {
+                val params = socket.sslParameters
+                params.serverNames = listOf(SNIHostName(host))
+                socket.sslParameters = params
+            } catch (_: Throwable) {}
+        }
+        return socket
+    }
+
     override fun createSocket(host: InetAddress, port: Int): Socket = delegate.createSocket(host, port)
     override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket = delegate.createSocket(address, port, localAddress, localPort)
 }
