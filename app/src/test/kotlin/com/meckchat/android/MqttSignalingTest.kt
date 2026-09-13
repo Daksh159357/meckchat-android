@@ -193,4 +193,50 @@ class MqttSignalingTest {
         assertEquals("Hello from peer!", messages?.first()?.content)
         assertEquals("msg_abc123", messages?.first()?.messageId)
     }
+
+    @Test
+    fun testRemoveDeviceAndClearOfflineDevices() {
+        val config = AppConfig(deviceId = "mc_self")
+        val manager = MqttSignalingManager(config)
+
+        val device1 = Device("mc_peer_1", "Peer 1", "android", isOnline = true)
+        val device2 = Device("mc_peer_2", "Peer 2", "linux", isOnline = false)
+        val device3 = Device("mc_peer_3", "Peer 3", "windows", isOnline = false)
+
+        manager.handleIncomingMessage(
+            MqttSignalingManager.TOPIC_DISCOVERY,
+            device1.toPresenceOnlineString()
+        )
+        manager.handleIncomingMessage(
+            MqttSignalingManager.TOPIC_DISCOVERY,
+            device2.toPresenceOnlineString()
+        )
+        manager.handleIncomingMessage(
+            MqttSignalingManager.TOPIC_DISCOVERY,
+            device3.toPresenceOnlineString()
+        )
+
+        // Mark 2 and 3 offline
+        manager.handleIncomingMessage(
+            MqttSignalingManager.TOPIC_DISCOVERY,
+            device2.toPresenceOfflineString()
+        )
+        manager.handleIncomingMessage(
+            MqttSignalingManager.TOPIC_DISCOVERY,
+            device3.toPresenceOfflineString()
+        )
+
+        assertEquals(3, manager.discoveredDevices.value.size)
+
+        // Remove single device
+        manager.removeDevice("mc_peer_2")
+        assertEquals(2, manager.discoveredDevices.value.size)
+        assertTrue(manager.discoveredDevices.value.none { it.deviceId == "mc_peer_2" })
+
+        // Clear remaining offline devices
+        manager.clearOfflineDevices()
+        assertEquals(1, manager.discoveredDevices.value.size)
+        assertEquals("mc_peer_1", manager.discoveredDevices.value.first().deviceId)
+        assertTrue(manager.discoveredDevices.value.first().isOnline)
+    }
 }

@@ -482,6 +482,22 @@ class MqttSignalingManager(
         _discoveredDevices.value = _discoveredDevicesMap.value.values.toList()
     }
 
+    fun removeDevice(deviceId: String) {
+        _discoveredDevicesMap.update { current ->
+            current - deviceId
+        }
+        _discoveredDevices.value = _discoveredDevicesMap.value.values.toList()
+        Logger.info(TAG, "Removed device: $deviceId")
+    }
+
+    fun clearOfflineDevices() {
+        _discoveredDevicesMap.update { current ->
+            current.filterValues { it.isOnline }
+        }
+        _discoveredDevices.value = _discoveredDevicesMap.value.values.toList()
+        Logger.info(TAG, "Cleared all offline devices")
+    }
+
     @Synchronized
     fun disconnect() {
         val client = mqttClient

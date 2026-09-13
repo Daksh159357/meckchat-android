@@ -17,15 +17,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -52,6 +55,7 @@ fun HomeScreen(
     val errorMessage by signalingManager.errorMessage.collectAsState()
     val discoveredDevices by signalingManager.discoveredDevices.collectAsState()
     val myDevice = signalingManager.getCurrentDevice()
+    val offlineCount = discoveredDevices.count { !it.isOnline }
 
     Scaffold(
         topBar = {
@@ -156,11 +160,36 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Text(
-                text = "Discovered Devices (${discoveredDevices.size})",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Discovered Devices (${discoveredDevices.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                if (offlineCount > 0) {
+                    TextButton(
+                        onClick = { signalingManager.clearOfflineDevices() }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Clear Offline",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Clear Offline ($offlineCount)",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -193,7 +222,8 @@ fun HomeScreen(
                     items(discoveredDevices, key = { it.deviceId }) { device ->
                         DeviceItemCard(
                             device = device,
-                            onClick = { onDeviceSelected(device) }
+                            onClick = { onDeviceSelected(device) },
+                            onRemove = { signalingManager.removeDevice(device.deviceId) }
                         )
                     }
                 }
@@ -205,7 +235,8 @@ fun HomeScreen(
 @Composable
 fun DeviceItemCard(
     device: Device,
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    onRemove: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -241,28 +272,47 @@ fun DeviceItemCard(
                 )
             }
 
-            Column(horizontalAlignment = Alignment.End) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(
-                            if (device.isOnline) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                if (device.isOnline) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (device.isOnline) "ONLINE" else "OFFLINE",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (device.isOnline) Color(0xFF2E7D32) else Color(0xFFC62828)
                         )
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = if (device.isOnline) "ONLINE" else "OFFLINE",
+                        text = if (device.isOnline) "Tap to Chat" else "Offline",
                         style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (device.isOnline) Color(0xFF2E7D32) else Color(0xFFC62828)
+                        color = if (device.isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                     )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Tap to Chat",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
+
+                if (!device.isOnline) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = onRemove,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Remove Offline Device",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
             }
         }
     }
