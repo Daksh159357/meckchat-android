@@ -444,6 +444,15 @@ class MqttSignalingManager(
                 return
             }
 
+            // Filter out automated CI/unit-test workers from user-facing discovery
+            if (senderDeviceId.startsWith("mc_test_") ||
+                senderDeviceId.startsWith("mc_client_") ||
+                senderDeviceId.contains("ci_") ||
+                senderDeviceId.contains("test_worker")) {
+                Logger.info(TAG, "Ignoring automated test worker device: $senderDeviceId")
+                return
+            }
+
             when (type) {
                 "presence_online" -> {
                     val discovered = Device.fromPresenceJson(json)

@@ -239,4 +239,22 @@ class MqttSignalingTest {
         assertEquals("mc_peer_1", manager.discoveredDevices.value.first().deviceId)
         assertTrue(manager.discoveredDevices.value.first().isOnline)
     }
+
+    @Test
+    fun testTestWorkerIsIgnored() {
+        val config = AppConfig(deviceId = "mc_self")
+        val manager = MqttSignalingManager(config)
+
+        val testWorkerDevice = Device("mc_test_ci_12345", "CI Test Worker", "linux", isOnline = true)
+        val testClientDevice = Device("mc_client_unit_test", "Unit Test Client", "linux", isOnline = true)
+        val regularDevice = Device("mc_android_friend", "Friend Phone", "android", isOnline = true)
+
+        manager.handleIncomingMessage(MqttSignalingManager.TOPIC_DISCOVERY, testWorkerDevice.toPresenceOnlineString())
+        manager.handleIncomingMessage(MqttSignalingManager.TOPIC_DISCOVERY, testClientDevice.toPresenceOnlineString())
+        manager.handleIncomingMessage(MqttSignalingManager.TOPIC_DISCOVERY, regularDevice.toPresenceOnlineString())
+
+        assertEquals(1, manager.discoveredDevices.value.size)
+        assertEquals("mc_android_friend", manager.discoveredDevices.value.first().deviceId)
+    }
 }
+
