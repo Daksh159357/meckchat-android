@@ -24,6 +24,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        AppConfig.instance.init(this)
         val signalingManager = MqttSignalingManager.instance
 
         // Ensure MQTT connection is active
