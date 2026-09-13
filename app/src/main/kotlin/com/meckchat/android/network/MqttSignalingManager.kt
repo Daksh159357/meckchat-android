@@ -34,60 +34,6 @@ enum class ConnectionState {
     ERROR
 }
 
-class IPv4SSLSocketFactory(
-    private val delegate: SSLSocketFactory
-) : SSLSocketFactory() {
-    companion object {
-        fun create(): IPv4SSLSocketFactory {
-            val sslContext = SSLContext.getInstance("TLS")
-            sslContext.init(null, null, null)
-            return IPv4SSLSocketFactory(sslContext.socketFactory)
-        }
-    }
-
-    override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
-    override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
-
-    override fun createSocket(): Socket {
-        return object : Socket() {
-            override fun connect(endpoint: SocketAddress?, timeout: Int) {
-                if (endpoint is InetSocketAddress) {
-                    val addr = endpoint.address
-                    if (addr != null && addr is Inet4Address) {
-                        super.connect(endpoint, timeout)
-                    } else {
-                        val host = endpoint.hostString
-                        val targetAddress = try {
-                            val addrs = InetAddress.getAllByName(host)
-                            addrs.firstOrNull { it is Inet4Address } ?: addrs.first()
-                        } catch (_: Exception) {
-                            addr ?: endpoint.address
-                        }
-                        super.connect(InetSocketAddress(targetAddress, endpoint.port), timeout)
-                    }
-                } else {
-                    super.connect(endpoint, timeout)
-                }
-            }
-        }
-    }
-
-    override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket =
-        delegate.createSocket(s, host, port, autoClose)
-
-    override fun createSocket(host: String, port: Int): Socket =
-        delegate.createSocket(host, port)
-
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
-        delegate.createSocket(host, port, localHost, localPort)
-
-    override fun createSocket(host: InetAddress, port: Int): Socket =
-        delegate.createSocket(host, port)
-
-    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket =
-        delegate.createSocket(address, port, localAddress, localPort)
-}
-
 class MqttSignalingManager(
     private val appConfig: AppConfig = AppConfig.instance
 ) {
@@ -144,6 +90,11 @@ class MqttSignalingManager(
             return
         }
 
+        try {
+            System.setProperty("java.net.preferIPv4Addresses", "true")
+            System.setProperty("java.net.preferIPv4Stack", "true")
+        } catch (_: Exception) {}
+
         _connectionState.value = ConnectionState.CONNECTING
         _errorMessage.value = null
         Logger.info(TAG, "MQTT initializing")
@@ -189,12 +140,15 @@ class MqttSignalingManager(
                 override fun deliveryComplete(token: IMqttDeliveryToken?) {}
             })
 
+            val sslContext = SSLContext.getInstance("TLS")
+            sslContext.init(null, null, null)
+
             val options = MqttConnectOptions().apply {
                 isAutomaticReconnect = true
                 isCleanSession = true
                 connectionTimeout = 30
                 keepAliveInterval = 60
-                socketFactory = IPv4SSLSocketFactory.create()
+                socketFactory = sslContext.socketFactory
 
                 val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
                 setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
