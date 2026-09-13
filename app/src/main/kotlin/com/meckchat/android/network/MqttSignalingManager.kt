@@ -169,11 +169,13 @@ class MqttSignalingManager(
         const val TOPIC_DISCOVERY = "meckchat/v1/discovery"
         const val TOPIC_PRESENCE_ONLINE_PREFIX = "meckchat/v1/presence/online/"
         const val TOPIC_PRESENCE_OFFLINE_PREFIX = "meckchat/v1/presence/offline/"
+        const val TOPIC_MESSAGE_PREFIX = "meckchat/v1/msg/"
 
         val instance = MqttSignalingManager()
 
         fun getPresenceOnlineTopic(deviceId: String): String = "$TOPIC_PRESENCE_ONLINE_PREFIX$deviceId"
         fun getPresenceOfflineTopic(deviceId: String): String = "$TOPIC_PRESENCE_OFFLINE_PREFIX$deviceId"
+        fun getDirectMessageTopic(deviceId: String): String = "$TOPIC_MESSAGE_PREFIX$deviceId"
     }
 
     private var mqttClient: MqttAsyncClient? = null
@@ -188,6 +190,9 @@ class MqttSignalingManager(
     private val _discoveredDevicesMap = MutableStateFlow<Map<String, Device>>(emptyMap())
     private val _discoveredDevices = MutableStateFlow<List<Device>>(emptyList())
     val discoveredDevices: StateFlow<List<Device>> = _discoveredDevices.asStateFlow()
+
+    private val _messagesMap = MutableStateFlow<Map<String, List<com.meckchat.android.model.ChatMessage>>>(emptyMap())
+    val messagesMap: StateFlow<Map<String, List<com.meckchat.android.model.ChatMessage>>> = _messagesMap.asStateFlow()
 
     fun isConnected(): Boolean {
         return mqttClient?.isConnected == true && _connectionState.value == ConnectionState.CONNECTED
@@ -312,12 +317,14 @@ class MqttSignalingManager(
         val client = mqttClient ?: return
         try {
             Logger.info(TAG, "MQTT subscribing")
+            val directTopic = getDirectMessageTopic(appConfig.deviceId)
             val topics = arrayOf(
                 TOPIC_DISCOVERY,
                 "$TOPIC_PRESENCE_ONLINE_PREFIX+",
-                "$TOPIC_PRESENCE_OFFLINE_PREFIX+"
+                "$TOPIC_PRESENCE_OFFLINE_PREFIX+",
+                directTopic
             )
-            val qos = intArrayOf(1, 1, 1)
+            val qos = intArrayOf(1, 1, 1, 1)
 
             client.subscribe(topics, qos, null, object : IMqttActionListener {
                 override fun onSuccess(asyncActionToken: IMqttToken?) {
@@ -331,6 +338,38 @@ class MqttSignalingManager(
         } catch (e: Exception) {
             Logger.error(TAG, "Exception during MQTT subscription: ${e.message}", e)
         }
+    }
+
+    fun sendChatMessage(recipientDeviceId: String, content: String): com.meckchat.android.model.ChatMessage? {
+        val client = mqttClient
+        val msgId = "msg_${java.util.UUID.randomUUID()}"
+        val message = com.meckchat.android.model.ChatMessage(
+            messageId = msgId,
+            senderDeviceId = appConfig.deviceId,
+            recipientDeviceId = recipientDeviceId,
+            content = content,
+            timestamp = System.currentTimeMillis() / 1000
+        )
+        val payload = message.toJson().toString().toByteArray(StandardCharsets.UTF_8)
+        val targetTopic = getDirectMessageTopic(recipientDeviceId)
+
+        _messagesMap.update { current ->
+            val existing = current[recipientDeviceId] ?: emptyList()
+            current + (recipientDeviceId to (existing + message))
+        }
+
+        if (client != null && client.isConnected) {
+            try {
+                val mqttMsg = MqttMessage(payload).apply { qos = 1 }
+                client.publish(targetTopic, mqttMsg)
+                Logger.info(TAG, "Chat message sent to $recipientDeviceId: $content")
+            } catch (e: Exception) {
+                Logger.error(TAG, "Failed to send chat message: ${e.message}", e)
+            }
+        } else {
+            Logger.warning(TAG, "Cannot send message - MQTT is not connected")
+        }
+        return message
     }
 
     fun publishPresence(device: Device = getCurrentDevice()) {
@@ -369,9 +408,24 @@ class MqttSignalingManager(
     }
 
     fun handleIncomingMessage(topic: String, payload: String) {
-        Logger.info(TAG, "MQTT discovery message received on topic: $topic")
+        Logger.info(TAG, "MQTT message received on topic: $topic")
         try {
             val json = JSONObject(payload)
+
+            // Handle direct chat message
+            if (topic.startsWith(TOPIC_MESSAGE_PREFIX) || json.has("message_id")) {
+                val chatMsg = com.meckchat.android.model.ChatMessage.fromJson(json)
+                if (chatMsg != null && chatMsg.senderDeviceId != appConfig.deviceId) {
+                    val peerId = chatMsg.senderDeviceId
+                    _messagesMap.update { current ->
+                        val existing = current[peerId] ?: emptyList()
+                        current + (peerId to (existing + chatMsg))
+                    }
+                    Logger.info(TAG, "Chat message received from $peerId: ${chatMsg.content}")
+                    return
+                }
+            }
+
             val type = json.optString("type")
             val senderDeviceId = json.optString("device_id")
             val myDeviceId = appConfig.deviceId
@@ -405,7 +459,7 @@ class MqttSignalingManager(
                 }
             }
         } catch (e: Exception) {
-            Logger.error(TAG, "Failed to parse discovery message: ${e.message}")
+            Logger.error(TAG, "Failed to parse incoming message: ${e.message}")
         }
     }
 

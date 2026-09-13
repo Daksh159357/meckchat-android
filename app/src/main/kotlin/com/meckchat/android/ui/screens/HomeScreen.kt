@@ -45,7 +45,8 @@ import com.meckchat.android.network.MqttSignalingManager
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    signalingManager: MqttSignalingManager = MqttSignalingManager.instance
+    signalingManager: MqttSignalingManager = MqttSignalingManager.instance,
+    onDeviceSelected: (Device) -> Unit = {}
 ) {
     val connectionState by signalingManager.connectionState.collectAsState()
     val errorMessage by signalingManager.errorMessage.collectAsState()
@@ -190,7 +191,10 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(discoveredDevices, key = { it.deviceId }) { device ->
-                        DeviceItemCard(device = device)
+                        DeviceItemCard(
+                            device = device,
+                            onClick = { onDeviceSelected(device) }
+                        )
                     }
                 }
             }
@@ -199,10 +203,14 @@ fun HomeScreen(
 }
 
 @Composable
-fun DeviceItemCard(device: Device) {
+fun DeviceItemCard(
+    device: Device,
+    onClick: () -> Unit = {}
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
+        onClick = onClick,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
@@ -233,19 +241,27 @@ fun DeviceItemCard(device: Device) {
                 )
             }
 
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(
-                        if (device.isOnline) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
+            Column(horizontalAlignment = Alignment.End) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(
+                            if (device.isOnline) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = if (device.isOnline) "ONLINE" else "OFFLINE",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (device.isOnline) Color(0xFF2E7D32) else Color(0xFFC62828)
                     )
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
+                }
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = if (device.isOnline) "ONLINE" else "OFFLINE",
+                    text = "Tap to Chat",
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (device.isOnline) Color(0xFF2E7D32) else Color(0xFFC62828)
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         }

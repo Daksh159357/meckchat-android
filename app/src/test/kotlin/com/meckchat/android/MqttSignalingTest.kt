@@ -166,4 +166,31 @@ class MqttSignalingTest {
         val discoveredList = manager.discoveredDevices.value
         assertEquals(0, discoveredList.size)
     }
+
+    @Test
+    fun testIncomingChatMessageUpdatesState() {
+        val myDeviceId = "mc_my_device_self"
+        val peerDeviceId = "mc_peer_device_123"
+        val config = AppConfig(deviceId = myDeviceId)
+        val manager = MqttSignalingManager(config)
+
+        val chatPayload = """
+            {
+                "message_id": "msg_abc123",
+                "sender_device_id": "$peerDeviceId",
+                "recipient_device_id": "$myDeviceId",
+                "content": "Hello from peer!",
+                "timestamp": 1725300500
+            }
+        """.trimIndent()
+
+        val directTopic = MqttSignalingManager.getDirectMessageTopic(myDeviceId)
+        manager.handleIncomingMessage(directTopic, chatPayload)
+
+        val messages = manager.messagesMap.value[peerDeviceId]
+        assertNotNull(messages)
+        assertEquals(1, messages?.size)
+        assertEquals("Hello from peer!", messages?.first()?.content)
+        assertEquals("msg_abc123", messages?.first()?.messageId)
+    }
 }
