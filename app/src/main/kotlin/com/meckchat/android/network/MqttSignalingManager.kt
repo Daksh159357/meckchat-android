@@ -36,6 +36,73 @@ enum class ConnectionState {
     ERROR
 }
 
+class IPv4SSLSocket(
+    private val delegate: SSLSocket,
+    private val expectedHost: String = "broker.hivemq.com"
+) : SSLSocket() {
+    override fun connect(endpoint: java.net.SocketAddress?, timeout: Int) {
+        val targetEndpoint = if (endpoint is java.net.InetSocketAddress) {
+            val host = endpoint.hostString ?: endpoint.hostName ?: expectedHost
+            val ipv4 = try {
+                val addrs = InetAddress.getAllByName(host)
+                addrs.firstOrNull { it is Inet4Address } ?: addrs.firstOrNull() ?: InetAddress.getByName(host)
+            } catch (_: Exception) {
+                endpoint.address ?: InetAddress.getByName(host)
+            }
+            java.net.InetSocketAddress(ipv4, endpoint.port)
+        } else {
+            endpoint
+        }
+        try {
+            val params = delegate.sslParameters
+            params.serverNames = listOf(SNIHostName(expectedHost))
+            delegate.sslParameters = params
+        } catch (_: Throwable) {}
+        delegate.connect(targetEndpoint, timeout)
+    }
+
+    override fun startHandshake() = delegate.startHandshake()
+    override fun getInputStream() = delegate.inputStream
+    override fun getOutputStream() = delegate.outputStream
+    override fun isConnected(): Boolean = delegate.isConnected
+    override fun isClosed(): Boolean = delegate.isClosed
+    override fun isBound(): Boolean = delegate.isBound
+    override fun close() = delegate.close()
+    override fun getSession(): javax.net.ssl.SSLSession = delegate.session
+    override fun getSSLParameters(): javax.net.ssl.SSLParameters = delegate.sslParameters
+    override fun setSSLParameters(params: javax.net.ssl.SSLParameters?) { delegate.sslParameters = params }
+    override fun getEnabledCipherSuites(): Array<String> = delegate.enabledCipherSuites
+    override fun setEnabledCipherSuites(suites: Array<out String>?) { delegate.enabledCipherSuites = suites }
+    override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
+    override fun getSupportedProtocols(): Array<String> = delegate.supportedProtocols
+    override fun getEnabledProtocols(): Array<String> = delegate.enabledProtocols
+    override fun setEnabledProtocols(protocols: Array<out String>?) { delegate.enabledProtocols = protocols }
+    override fun getNeedClientAuth(): Boolean = delegate.needClientAuth
+    override fun setNeedClientAuth(need: Boolean) { delegate.needClientAuth = need }
+    override fun getWantClientAuth(): Boolean = delegate.wantClientAuth
+    override fun setWantClientAuth(want: Boolean) { delegate.wantClientAuth = want }
+    override fun getUseClientMode(): Boolean = delegate.useClientMode
+    override fun setUseClientMode(mode: Boolean) { delegate.useClientMode = mode }
+    override fun getEnableSessionCreation(): Boolean = delegate.enableSessionCreation
+    override fun setEnableSessionCreation(flag: Boolean) { delegate.enableSessionCreation = flag }
+    override fun addHandshakeCompletedListener(listener: javax.net.ssl.HandshakeCompletedListener?) {
+        delegate.addHandshakeCompletedListener(listener)
+    }
+    override fun removeHandshakeCompletedListener(listener: javax.net.ssl.HandshakeCompletedListener?) {
+        delegate.removeHandshakeCompletedListener(listener)
+    }
+    override fun getInetAddress(): InetAddress? = delegate.inetAddress
+    override fun getPort(): Int = delegate.port
+    override fun getLocalSocketAddress(): java.net.SocketAddress? = delegate.localSocketAddress
+    override fun getRemoteSocketAddress(): java.net.SocketAddress? = delegate.remoteSocketAddress
+    override fun setSoTimeout(timeout: Int) { delegate.soTimeout = timeout }
+    override fun getSoTimeout(): Int = delegate.soTimeout
+    override fun setTcpNoDelay(on: Boolean) { delegate.tcpNoDelay = on }
+    override fun getTcpNoDelay(): Boolean = delegate.tcpNoDelay
+    override fun setKeepAlive(on: Boolean) { delegate.keepAlive = on }
+    override fun getKeepAlive(): Boolean = delegate.keepAlive
+}
+
 class IPv4SSLSocketFactory(
     private val expectedHost: String = "broker.hivemq.com"
 ) : SSLSocketFactory() {
@@ -47,36 +114,51 @@ class IPv4SSLSocketFactory(
         delegate = sslContext.socketFactory
     }
 
-    private fun configureSocket(socket: Socket): Socket {
-        if (socket is SSLSocket) {
-            try {
-                val params = socket.sslParameters
-                params.serverNames = listOf(SNIHostName(expectedHost))
-                socket.sslParameters = params
-            } catch (_: Throwable) {}
-        }
-        return socket
-    }
-
     override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
     override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
 
-    override fun createSocket(): Socket = configureSocket(delegate.createSocket())
+    override fun createSocket(): Socket {
+        val sslSocket = delegate.createSocket() as SSLSocket
+        return IPv4SSLSocket(sslSocket, expectedHost)
+    }
 
-    override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket =
-        configureSocket(delegate.createSocket(s, expectedHost, port, autoClose))
+    override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket {
+        val targetHost = if (host.isNotEmpty()) host else expectedHost
+        val sslSocket = delegate.createSocket(s, targetHost, port, autoClose) as SSLSocket
+        return IPv4SSLSocket(sslSocket, targetHost)
+    }
 
-    override fun createSocket(host: String, port: Int): Socket =
-        configureSocket(delegate.createSocket(expectedHost, port))
+    override fun createSocket(host: String, port: Int): Socket {
+        val targetHost = if (host.isNotEmpty()) host else expectedHost
+        val sslSocket = delegate.createSocket() as SSLSocket
+        val socket = IPv4SSLSocket(sslSocket, targetHost)
+        socket.connect(java.net.InetSocketAddress(targetHost, port), 30000)
+        return socket
+    }
 
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
-        configureSocket(delegate.createSocket(expectedHost, port, localHost, localPort))
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket {
+        val targetHost = if (host.isNotEmpty()) host else expectedHost
+        val sslSocket = delegate.createSocket() as SSLSocket
+        sslSocket.bind(java.net.InetSocketAddress(localHost, localPort))
+        val socket = IPv4SSLSocket(sslSocket, targetHost)
+        socket.connect(java.net.InetSocketAddress(targetHost, port), 30000)
+        return socket
+    }
 
-    override fun createSocket(host: InetAddress, port: Int): Socket =
-        configureSocket(delegate.createSocket(host, port))
+    override fun createSocket(host: InetAddress, port: Int): Socket {
+        val sslSocket = delegate.createSocket() as SSLSocket
+        val socket = IPv4SSLSocket(sslSocket, expectedHost)
+        socket.connect(java.net.InetSocketAddress(host, port), 30000)
+        return socket
+    }
 
-    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket =
-        configureSocket(delegate.createSocket(address, port, localAddress, localPort))
+    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket {
+        val sslSocket = delegate.createSocket() as SSLSocket
+        sslSocket.bind(java.net.InetSocketAddress(localAddress, localPort))
+        val socket = IPv4SSLSocket(sslSocket, expectedHost)
+        socket.connect(java.net.InetSocketAddress(address, port), 30000)
+        return socket
+    }
 }
 
 class MqttSignalingManager(
@@ -145,15 +227,7 @@ class MqttSignalingManager(
         Logger.info(TAG, "MQTT initializing")
         Logger.info(TAG, "MQTT connecting to $brokerHost:$port")
 
-        val resolvedIp = try {
-            val addrs = InetAddress.getAllByName(brokerHost)
-            addrs.firstOrNull { it is Inet4Address }?.hostAddress ?: addrs.firstOrNull()?.hostAddress ?: brokerHost
-        } catch (_: Exception) {
-            brokerHost
-        }
-
-        Logger.info(TAG, "MQTT resolved $brokerHost to IPv4: $resolvedIp")
-        val serverUri = "ssl://$resolvedIp:$port"
+        val serverUri = "ssl://$brokerHost:$port"
         val clientId = "${device.deviceId}_${System.currentTimeMillis() % 100000}"
 
         try {
