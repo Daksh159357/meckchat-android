@@ -246,15 +246,18 @@ class MqttSignalingTest {
         val manager = MqttSignalingManager(config)
 
         val testWorkerDevice = Device("mc_test_ci_12345", "CI Test Worker", "linux", isOnline = true)
-        val testClientDevice = Device("mc_client_unit_test", "Unit Test Client", "linux", isOnline = true)
+        val linuxClientDevice = Device("mc_client_unit_test", "Linux Client", "linux", isOnline = true)
         val regularDevice = Device("mc_android_friend", "Friend Phone", "android", isOnline = true)
 
         manager.handleIncomingMessage(MqttSignalingManager.TOPIC_DISCOVERY, testWorkerDevice.toPresenceOnlineString())
-        manager.handleIncomingMessage(MqttSignalingManager.TOPIC_DISCOVERY, testClientDevice.toPresenceOnlineString())
+        manager.handleIncomingMessage(MqttSignalingManager.TOPIC_DISCOVERY, linuxClientDevice.toPresenceOnlineString())
         manager.handleIncomingMessage(MqttSignalingManager.TOPIC_DISCOVERY, regularDevice.toPresenceOnlineString())
 
-        assertEquals(1, manager.discoveredDevices.value.size)
-        assertEquals("mc_android_friend", manager.discoveredDevices.value.first().deviceId)
+        // testWorkerDevice should be ignored, linuxClientDevice and regularDevice should be discovered
+        assertEquals(2, manager.discoveredDevices.value.size)
+        assertTrue(manager.discoveredDevices.value.any { it.deviceId == "mc_client_unit_test" })
+        assertTrue(manager.discoveredDevices.value.any { it.deviceId == "mc_android_friend" })
     }
 }
+
 

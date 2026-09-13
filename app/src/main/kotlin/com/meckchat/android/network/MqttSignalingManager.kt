@@ -444,12 +444,9 @@ class MqttSignalingManager(
                 return
             }
 
-            // Filter out automated CI/unit-test workers from user-facing discovery
-            if (senderDeviceId.startsWith("mc_test_") ||
-                senderDeviceId.startsWith("mc_client_") ||
-                senderDeviceId.contains("ci_") ||
-                senderDeviceId.contains("test_worker")) {
-                Logger.info(TAG, "Ignoring automated test worker device: $senderDeviceId")
+            // Only filter out ephemeral CI test workers
+            if (senderDeviceId.startsWith("mc_test_ci_") || senderDeviceId.contains("ci_worker")) {
+                Logger.info(TAG, "Ignoring automated CI worker device: $senderDeviceId")
                 return
             }
 
