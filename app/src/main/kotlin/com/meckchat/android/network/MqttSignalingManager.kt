@@ -23,8 +23,9 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketAddress
 import java.nio.charset.StandardCharsets
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SNIHostName
-import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
@@ -37,79 +38,44 @@ enum class ConnectionState {
 }
 
 class IPv4SSLSocketFactory(
+    private val expectedHost: String = "broker.hivemq.com",
     private val delegate: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
 ) : SSLSocketFactory() {
     override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
     override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
 
-    private fun getIPv4Address(host: String): InetAddress {
-        return try {
-            val addrs = InetAddress.getAllByName(host)
-            addrs.firstOrNull { it is Inet4Address } ?: addrs.first()
-        } catch (_: Exception) {
-            InetAddress.getByName(host)
-        }
-    }
-
-    override fun createSocket(): Socket {
-        return object : Socket() {
-            override fun connect(endpoint: SocketAddress?, timeout: Int) {
-                if (endpoint is InetSocketAddress) {
-                    val host = endpoint.hostName ?: endpoint.hostString
-                    val targetAddress = if (!host.isNullOrEmpty()) {
-                        getIPv4Address(host)
-                    } else {
-                        endpoint.address
-                    }
-                    val ipv4Endpoint = InetSocketAddress(targetAddress, endpoint.port)
-                    super.connect(ipv4Endpoint, timeout)
-                } else {
-                    super.connect(endpoint, timeout)
-                }
-            }
-        }
-    }
+    override fun createSocket(): Socket = delegate.createSocket()
 
     override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket {
         val socket = delegate.createSocket(s, host, port, autoClose)
-        if (socket is SSLSocket) {
-            try {
-                val params = socket.sslParameters
-                params.serverNames = listOf(SNIHostName(host))
-                socket.sslParameters = params
-            } catch (_: Throwable) {}
-        }
+        setSniHostName(socket, expectedHost)
         return socket
     }
 
     override fun createSocket(host: String, port: Int): Socket {
-        val ipv4 = getIPv4Address(host)
-        val socket = delegate.createSocket(ipv4, port)
-        if (socket is SSLSocket) {
-            try {
-                val params = socket.sslParameters
-                params.serverNames = listOf(SNIHostName(host))
-                socket.sslParameters = params
-            } catch (_: Throwable) {}
-        }
+        val socket = delegate.createSocket(host, port)
+        setSniHostName(socket, expectedHost)
         return socket
     }
 
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket {
-        val ipv4 = getIPv4Address(host)
-        val socket = delegate.createSocket(ipv4, port, localHost, localPort)
-        if (socket is SSLSocket) {
-            try {
-                val params = socket.sslParameters
-                params.serverNames = listOf(SNIHostName(host))
-                socket.sslParameters = params
-            } catch (_: Throwable) {}
-        }
+        val socket = delegate.createSocket(host, port, localHost, localPort)
+        setSniHostName(socket, expectedHost)
         return socket
     }
 
     override fun createSocket(host: InetAddress, port: Int): Socket = delegate.createSocket(host, port)
     override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket = delegate.createSocket(address, port, localAddress, localPort)
+
+    private fun setSniHostName(socket: Socket, host: String) {
+        if (socket is SSLSocket) {
+            try {
+                val params = socket.sslParameters
+                params.serverNames = listOf(SNIHostName(host))
+                socket.sslParameters = params
+            } catch (_: Throwable) {}
+        }
+    }
 }
 
 class MqttSignalingManager(
@@ -173,7 +139,15 @@ class MqttSignalingManager(
         Logger.info(TAG, "MQTT initializing")
         Logger.info(TAG, "MQTT connecting to $brokerHost:$port")
 
-        val serverUri = "ssl://$brokerHost:$port"
+        val resolvedIp = try {
+            val addrs = InetAddress.getAllByName(brokerHost)
+            addrs.firstOrNull { it is Inet4Address }?.hostAddress ?: addrs.firstOrNull()?.hostAddress ?: brokerHost
+        } catch (_: Exception) {
+            brokerHost
+        }
+
+        Logger.info(TAG, "MQTT resolved host $brokerHost to IP $resolvedIp")
+        val serverUri = "ssl://$resolvedIp:$port"
         val clientId = "${device.deviceId}_${System.currentTimeMillis() % 100000}"
 
         try {
@@ -218,7 +192,11 @@ class MqttSignalingManager(
                 isCleanSession = true
                 connectionTimeout = 30
                 keepAliveInterval = 60
-                socketFactory = IPv4SSLSocketFactory()
+                socketFactory = IPv4SSLSocketFactory(expectedHost = brokerHost)
+                sslHostnameVerifier = HostnameVerifier { hostname, session ->
+                    // Verify that the server's certificate matches the original broker hostname
+                    HttpsURLConnection.getDefaultHostnameVerifier().verify(brokerHost, session)
+                }
 
                 val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
                 setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
