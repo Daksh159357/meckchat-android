@@ -44,8 +44,17 @@ data class Device(
             if (id.isEmpty()) return null
 
             val type = json.optString("type", "presence_online")
-            val name = json.optString("display_name", "Unknown Device")
-            val plat = json.optString("platform", "unknown")
+            val name = when {
+                json.has("display_name") && json.optString("display_name").isNotEmpty() -> json.optString("display_name")
+                json.has("name") && json.optString("name").isNotEmpty() -> json.optString("name")
+                json.has("hostname") && json.optString("hostname").isNotEmpty() -> json.optString("hostname")
+                else -> id
+            }
+            val plat = when {
+                json.has("platform") && json.optString("platform").isNotEmpty() -> json.optString("platform")
+                json.has("os") && json.optString("os").isNotEmpty() -> json.optString("os")
+                else -> "linux"
+            }
             val ts = json.optLong("timestamp", System.currentTimeMillis() / 1000)
 
             return Device(

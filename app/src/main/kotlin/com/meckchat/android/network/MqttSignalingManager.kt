@@ -283,7 +283,7 @@ class MqttSignalingManager(
                 }
 
                 val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
-                setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
+                setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, true)
             }
 
                 mqttClient?.connect(options, null, object : IMqttActionListener {
@@ -328,7 +328,8 @@ class MqttSignalingManager(
 
             client.subscribe(topics, qos, null, object : IMqttActionListener {
                 override fun onSuccess(asyncActionToken: IMqttToken?) {
-                    Logger.info(TAG, "MQTT subscription successful")
+                    Logger.info(TAG, "MQTT subscription successful - broadcasting discovery")
+                    broadcastDiscovery()
                 }
 
                 override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
@@ -378,13 +379,19 @@ class MqttSignalingManager(
             val payload = device.toPresenceOnlineString().toByteArray(StandardCharsets.UTF_8)
             val onlineTopic = getPresenceOnlineTopic(device.deviceId)
 
-            val msg1 = MqttMessage(payload).apply { qos = 1 }
+            val msg1 = MqttMessage(payload).apply {
+                qos = 1
+                isRetained = true
+            }
             client.publish(onlineTopic, msg1)
 
-            val msg2 = MqttMessage(payload).apply { qos = 1 }
+            val msg2 = MqttMessage(payload).apply {
+                qos = 1
+                isRetained = false
+            }
             client.publish(TOPIC_DISCOVERY, msg2)
 
-            Logger.info(TAG, "MQTT online presence published")
+            Logger.info(TAG, "MQTT online presence published (retained & discovery)")
         } catch (e: Exception) {
             Logger.error(TAG, "Failed to publish online presence: ${e.message}", e)
         }
@@ -397,9 +404,12 @@ class MqttSignalingManager(
             val request = DiscoveryRequest(deviceId = myDevice.deviceId)
             val reqPayload = request.toJson().toString().toByteArray(StandardCharsets.UTF_8)
 
-            val msg = MqttMessage(reqPayload).apply { qos = 1 }
+            val msg = MqttMessage(reqPayload).apply {
+                qos = 1
+                isRetained = false
+            }
             client.publish(TOPIC_DISCOVERY, msg)
-            Logger.info(TAG, "MQTT discovery published")
+            Logger.info(TAG, "MQTT discovery broadcast sent")
 
             publishPresence(myDevice)
         } catch (e: Exception) {
@@ -465,7 +475,18 @@ class MqttSignalingManager(
 
     private fun updateDiscoveredDevice(device: Device) {
         _discoveredDevicesMap.update { current ->
-            current + (device.deviceId to device)
+            val existing = current[device.deviceId]
+            val updated = if (existing != null) {
+                existing.copy(
+                    displayName = if (device.displayName.isNotEmpty() && device.displayName != device.deviceId) device.displayName else existing.displayName,
+                    platform = if (device.platform.isNotEmpty()) device.platform else existing.platform,
+                    isOnline = true,
+                    lastSeen = device.lastSeen
+                )
+            } else {
+                device.copy(isOnline = true)
+            }
+            current + (device.deviceId to updated)
         }
         _discoveredDevices.value = _discoveredDevicesMap.value.values.toList()
     }
