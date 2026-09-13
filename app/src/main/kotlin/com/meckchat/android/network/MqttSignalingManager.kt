@@ -19,15 +19,12 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.SocketAddress
 import java.nio.charset.StandardCharsets
-import java.security.KeyStore
-import java.security.cert.X509Certificate
-import javax.net.ssl.HostnameVerifier
-import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
-import javax.net.ssl.TrustManagerFactory
-import javax.net.ssl.X509TrustManager
 
 enum class ConnectionState {
     DISCONNECTED,
@@ -35,6 +32,60 @@ enum class ConnectionState {
     CONNECTED,
     RECONNECTING,
     ERROR
+}
+
+class IPv4SSLSocketFactory(
+    private val delegate: SSLSocketFactory
+) : SSLSocketFactory() {
+    companion object {
+        fun create(): IPv4SSLSocketFactory {
+            val sslContext = SSLContext.getInstance("TLS")
+            sslContext.init(null, null, null)
+            return IPv4SSLSocketFactory(sslContext.socketFactory)
+        }
+    }
+
+    override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
+    override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
+
+    override fun createSocket(): Socket {
+        return object : Socket() {
+            override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                if (endpoint is InetSocketAddress) {
+                    val addr = endpoint.address
+                    if (addr != null && addr is Inet4Address) {
+                        super.connect(endpoint, timeout)
+                    } else {
+                        val host = endpoint.hostString
+                        val targetAddress = try {
+                            val addrs = InetAddress.getAllByName(host)
+                            addrs.firstOrNull { it is Inet4Address } ?: addrs.first()
+                        } catch (_: Exception) {
+                            addr ?: endpoint.address
+                        }
+                        super.connect(InetSocketAddress(targetAddress, endpoint.port), timeout)
+                    }
+                } else {
+                    super.connect(endpoint, timeout)
+                }
+            }
+        }
+    }
+
+    override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket =
+        delegate.createSocket(s, host, port, autoClose)
+
+    override fun createSocket(host: String, port: Int): Socket =
+        delegate.createSocket(host, port)
+
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
+        delegate.createSocket(host, port, localHost, localPort)
+
+    override fun createSocket(host: InetAddress, port: Int): Socket =
+        delegate.createSocket(host, port)
+
+    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket =
+        delegate.createSocket(address, port, localAddress, localPort)
 }
 
 class MqttSignalingManager(
@@ -50,33 +101,6 @@ class MqttSignalingManager(
 
         fun getPresenceOnlineTopic(deviceId: String): String = "$TOPIC_PRESENCE_ONLINE_PREFIX$deviceId"
         fun getPresenceOfflineTopic(deviceId: String): String = "$TOPIC_PRESENCE_OFFLINE_PREFIX$deviceId"
-
-        fun buildSSLConfig(expectedHost: String): Pair<SSLSocketFactory, HostnameVerifier> {
-            val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-            tmf.init(null as KeyStore?)
-            val origTrustManager = tmf.trustManagers.first { it is X509TrustManager } as X509TrustManager
-
-            val customTrustManager = object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-                    origTrustManager.checkClientTrusted(chain, authType)
-                }
-
-                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-                    origTrustManager.checkServerTrusted(chain, authType)
-                }
-
-                override fun getAcceptedIssuers(): Array<X509Certificate> = origTrustManager.acceptedIssuers
-            }
-
-            val sslContext = SSLContext.getInstance("TLS")
-            sslContext.init(null, arrayOf(customTrustManager), null)
-
-            val hostnameVerifier = HostnameVerifier { _, session ->
-                HttpsURLConnection.getDefaultHostnameVerifier().verify(expectedHost, session)
-            }
-
-            return Pair(sslContext.socketFactory, hostnameVerifier)
-        }
     }
 
     private var mqttClient: MqttAsyncClient? = null
@@ -125,15 +149,7 @@ class MqttSignalingManager(
         Logger.info(TAG, "MQTT initializing")
         Logger.info(TAG, "MQTT connecting to $brokerHost:$port")
 
-        val resolvedIp = try {
-            val addrs = InetAddress.getAllByName(brokerHost)
-            addrs.firstOrNull { it is Inet4Address }?.hostAddress ?: addrs.firstOrNull()?.hostAddress ?: brokerHost
-        } catch (_: Exception) {
-            brokerHost
-        }
-
-        Logger.info(TAG, "MQTT resolved host $brokerHost to IP $resolvedIp")
-        val serverUri = "ssl://$resolvedIp:$port"
+        val serverUri = "ssl://$brokerHost:$port"
         val clientId = "${device.deviceId}_${System.currentTimeMillis() % 100000}"
 
         try {
@@ -173,15 +189,12 @@ class MqttSignalingManager(
                 override fun deliveryComplete(token: IMqttDeliveryToken?) {}
             })
 
-            val (sslSocketFactory, sslHostnameVerifier) = buildSSLConfig(brokerHost)
-
             val options = MqttConnectOptions().apply {
                 isAutomaticReconnect = true
                 isCleanSession = true
                 connectionTimeout = 30
                 keepAliveInterval = 60
-                socketFactory = sslSocketFactory
-                this.sslHostnameVerifier = sslHostnameVerifier
+                socketFactory = IPv4SSLSocketFactory.create()
 
                 val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
                 setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
