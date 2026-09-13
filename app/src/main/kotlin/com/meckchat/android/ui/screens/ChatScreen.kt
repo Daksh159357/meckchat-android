@@ -35,6 +35,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,8 +46,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.meckchat.android.model.ChatMessage
 import com.meckchat.android.model.Device
+import com.meckchat.android.model.P2PConnectionState
+import com.meckchat.android.network.P2PTransportManager
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -62,6 +66,14 @@ fun ChatScreen(
 ) {
     var textInput by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val peerStates by P2PTransportManager.instance.peerStates.collectAsState()
+    val p2pState = peerStates[peerDevice.deviceId] ?: P2PConnectionState.DISCOVERING
+
+    val endpointInfo = if (peerDevice.endpoints.isNotEmpty()) {
+        peerDevice.endpoints.joinToString(", ") { "${it.host}:${it.port}" }
+    } else {
+        "TCP :7788"
+    }
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
@@ -81,17 +93,27 @@ fun ChatScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.width(8.dp))
+                            val (dotColor, stateLabel) = when (p2pState) {
+                                P2PConnectionState.P2P_CONNECTED -> Color(0xFF4CAF50) to "P2P TCP"
+                                P2PConnectionState.P2P_CONNECTING -> Color(0xFFFF9800) to "Connecting..."
+                                else -> (if (peerDevice.isOnline) Color(0xFF2196F3) else Color(0xFF9E9E9E)) to "Discovered"
+                            }
                             Box(
                                 modifier = Modifier
                                     .size(8.dp)
                                     .clip(CircleShape)
-                                    .background(
-                                        if (peerDevice.isOnline) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
-                                    )
+                                    .background(dotColor)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = stateLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = dotColor,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                         Text(
-                            text = "${peerDevice.platform.uppercase()} • ${peerDevice.deviceId.take(18)}...",
+                            text = "${peerDevice.platform.uppercase()} • $endpointInfo",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
@@ -128,13 +150,13 @@ fun ChatScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "Connected to ${peerDevice.displayName}",
+                            text = "Direct P2P Chat with ${peerDevice.displayName}",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Send a message via MQTT signaling",
+                            text = "Transport: Direct TCP :7788 (No MQTT data hop)",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.outline
                         )
@@ -166,7 +188,7 @@ fun ChatScreen(
                 OutlinedTextField(
                     value = textInput,
                     onValueChange = { textInput = it },
-                    placeholder = { Text("Type a message...") },
+                    placeholder = { Text("Type a direct P2P message...") },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(24.dp),
                     singleLine = true
@@ -229,17 +251,36 @@ fun ChatBubble(message: ChatMessage, isFromMe: Boolean) {
                     }
                 )
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = timeStr,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isFromMe) {
-                        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
-                    } else {
-                        MaterialTheme.colorScheme.outline
-                    },
-                    modifier = Modifier.align(Alignment.End)
-                )
+                Row(
+                    modifier = Modifier.align(Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = timeStr,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isFromMe) {
+                            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
+                        } else {
+                            MaterialTheme.colorScheme.outline
+                        }
+                    )
+                    if (isFromMe) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        val (ackIcon, ackColor) = when {
+                            message.isDelivered -> "✓✓" to Color(0xFF81C784) // Green double check
+                            message.isFailed -> "!" to Color(0xFFE57373)
+                            else -> "✓" to MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
+                        }
+                        Text(
+                            text = ackIcon,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ackColor
+                        )
+                    }
+                }
             }
         }
     }
 }
+

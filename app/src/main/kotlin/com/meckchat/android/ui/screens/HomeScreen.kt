@@ -42,8 +42,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.meckchat.android.core.AppConfig
 import com.meckchat.android.model.Device
+import com.meckchat.android.model.P2PConnectionState
 import com.meckchat.android.network.ConnectionState
 import com.meckchat.android.network.MqttSignalingManager
+import com.meckchat.android.network.P2PTransportManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,6 +56,7 @@ fun HomeScreen(
     val connectionState by signalingManager.connectionState.collectAsState()
     val errorMessage by signalingManager.errorMessage.collectAsState()
     val discoveredDevices by signalingManager.discoveredDevices.collectAsState()
+    val peerStates by P2PTransportManager.instance.peerStates.collectAsState()
     val myDevice = signalingManager.getCurrentDevice()
     val offlineCount = discoveredDevices.count { !it.isOnline }
 
@@ -151,9 +154,15 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "Broker: ${AppConfig.instance.mqttBrokerHost}:${AppConfig.instance.mqttBrokerPort} (TLS)",
+                        text = "Broker: ${AppConfig.instance.mqttBrokerHost}:${AppConfig.instance.mqttBrokerPort} (TLS Signaling)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "P2P Server: TCP :7788 (Active)",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF2E7D32)
                     )
                 }
             }
@@ -220,8 +229,10 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(discoveredDevices, key = { it.deviceId }) { device ->
+                        val p2pState = peerStates[device.deviceId] ?: P2PConnectionState.DISCOVERING
                         DeviceItemCard(
                             device = device,
+                            p2pState = p2pState,
                             onClick = { onDeviceSelected(device) },
                             onRemove = { signalingManager.removeDevice(device.deviceId) }
                         )
@@ -235,9 +246,16 @@ fun HomeScreen(
 @Composable
 fun DeviceItemCard(
     device: Device,
+    p2pState: P2PConnectionState = P2PConnectionState.DISCOVERING,
     onClick: () -> Unit = {},
     onRemove: () -> Unit = {}
 ) {
+    val endpointStr = if (device.endpoints.isNotEmpty()) {
+        device.endpoints.joinToString(", ") { "${it.host}:${it.port}" }
+    } else {
+        "Direct TCP :7788"
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -266,7 +284,7 @@ fun DeviceItemCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "Platform: ${device.platform}",
+                    text = "Platform: ${device.platform.uppercase()} • $endpointStr",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline
                 )
@@ -276,19 +294,24 @@ fun DeviceItemCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(horizontalAlignment = Alignment.End) {
+                    val (badgeText, badgeBg, badgeTextColor) = when {
+                        !device.isOnline -> Triple("OFFLINE", Color(0xFFFFEBEE), Color(0xFFC62828))
+                        p2pState == P2PConnectionState.P2P_CONNECTED -> Triple("P2P CONNECTED", Color(0xFFE8F5E9), Color(0xFF2E7D32))
+                        p2pState == P2PConnectionState.P2P_CONNECTING -> Triple("P2P CONNECTING", Color(0xFFFFF3E0), Color(0xFFEF6C00))
+                        else -> Triple("DISCOVERED", Color(0xFFE3F2FD), Color(0xFF1565C0))
+                    }
+
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(
-                                if (device.isOnline) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
-                            )
+                            .background(badgeBg)
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = if (device.isOnline) "ONLINE" else "OFFLINE",
+                            text = badgeText,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = if (device.isOnline) Color(0xFF2E7D32) else Color(0xFFC62828)
+                            color = badgeTextColor
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))

@@ -168,30 +168,41 @@ class MqttSignalingTest {
     }
 
     @Test
-    fun testIncomingChatMessageUpdatesState() {
+    fun testIncomingDiscoveryWithEndpointsUpdatesState() {
         val myDeviceId = "mc_my_device_self"
-        val peerDeviceId = "mc_peer_device_123"
+        val peerDeviceId = "mc_12345678-1234-4abc-8def-123456789abc"
         val config = AppConfig(deviceId = myDeviceId)
         val manager = MqttSignalingManager(config)
 
-        val chatPayload = """
+        val discoveryPayload = """
             {
-                "message_id": "msg_abc123",
-                "sender_device_id": "$peerDeviceId",
-                "recipient_device_id": "$myDeviceId",
-                "content": "Hello from peer!",
-                "timestamp": 1725300500
+                "protocol_version": 1,
+                "device_id": "$peerDeviceId",
+                "device_name": "mc_client_unit_test",
+                "platform": "linux",
+                "endpoints": [
+                    {
+                        "type": "tcp",
+                        "host": "192.168.1.100",
+                        "port": 7788
+                    }
+                ],
+                "timestamp": 1778750000
             }
         """.trimIndent()
 
-        val directTopic = MqttSignalingManager.getDirectMessageTopic(myDeviceId)
-        manager.handleIncomingMessage(directTopic, chatPayload)
+        manager.handleIncomingMessage(MqttSignalingManager.TOPIC_DISCOVERY, discoveryPayload)
 
-        val messages = manager.messagesMap.value[peerDeviceId]
-        assertNotNull(messages)
-        assertEquals(1, messages?.size)
-        assertEquals("Hello from peer!", messages?.first()?.content)
-        assertEquals("msg_abc123", messages?.first()?.messageId)
+        val discoveredList = manager.discoveredDevices.value
+        assertEquals(1, discoveredList.size)
+        val peer = discoveredList[0]
+        assertEquals(peerDeviceId, peer.deviceId)
+        assertEquals("mc_client_unit_test", peer.displayName)
+        assertEquals("linux", peer.platform)
+        assertEquals(1, peer.endpoints.size)
+        assertEquals("192.168.1.100", peer.endpoints[0].host)
+        assertEquals(7788, peer.endpoints[0].port)
+        assertTrue(peer.isOnline)
     }
 
     @Test

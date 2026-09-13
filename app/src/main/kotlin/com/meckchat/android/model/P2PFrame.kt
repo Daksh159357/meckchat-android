@@ -64,6 +64,25 @@ data class P2PFrame(
     companion object {
         const val MAGIC: Short = 0x4D43
 
+        fun createChatMessage(chatMessage: ChatMessage): P2PFrame {
+            val payload = chatMessage.toJson().toString().toByteArray(Charsets.UTF_8)
+            return P2PFrame(FrameType.CHAT_MESSAGE, payload)
+        }
+
+        fun createMessageAck(messageId: String, status: String = "delivered"): P2PFrame {
+            val ack = MessageAck(messageId = messageId, status = status)
+            val payload = ack.toJson().toString().toByteArray(Charsets.UTF_8)
+            return P2PFrame(FrameType.MESSAGE_ACK, payload)
+        }
+
+        fun createHeartbeat(deviceId: String): P2PFrame {
+            val json = org.json.JSONObject().apply {
+                put("device_id", deviceId)
+                put("timestamp", System.currentTimeMillis() / 1000)
+            }
+            return P2PFrame(FrameType.HEARTBEAT, json.toString().toByteArray(Charsets.UTF_8))
+        }
+
         fun decode(bytes: ByteArray): P2PFrame? {
             if (bytes.size < 12) return null
 
@@ -90,5 +109,41 @@ data class P2PFrame(
 
             return P2PFrame(type, payload)
         }
+
+        fun readFrom(input: java.io.InputStream): P2PFrame? {
+            val dataInput = java.io.DataInputStream(input)
+            val magic = dataInput.readShort()
+            if (magic != MAGIC) return null
+
+            val typeCode = dataInput.readShort()
+            val type = FrameType.fromCode(typeCode) ?: return null
+
+            val length = dataInput.readInt()
+            if (length < 0 || length > 10 * 1024 * 1024) return null // 10MB safety limit
+
+            val payload = ByteArray(length)
+            if (length > 0) {
+                dataInput.readFully(payload)
+            }
+
+            val expectedCrc = dataInput.readInt().toLong() and 0xFFFFFFFFL
+
+            // Calculate CRC over Header (8B) + Payload
+            val headerBuf = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN)
+            headerBuf.putShort(magic)
+            headerBuf.putShort(typeCode)
+            headerBuf.putInt(length)
+
+            val crc = CRC32()
+            crc.update(headerBuf.array())
+            if (length > 0) {
+                crc.update(payload)
+            }
+
+            if (crc.value != expectedCrc) return null
+
+            return P2PFrame(type, payload)
+        }
     }
 }
+
