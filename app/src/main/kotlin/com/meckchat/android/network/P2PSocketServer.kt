@@ -21,8 +21,8 @@ import java.nio.charset.StandardCharsets
 
 class P2PSocketServer(
     private val port: Int = NetworkUtils.DEFAULT_P2P_PORT,
-    private val onMessageReceived: (ChatMessage) -> Unit,
-    private val onAckReceived: (String) -> Unit
+    private val onMessageReceived: (ChatMessage) -> Unit = {},
+    private val onAckReceived: (String) -> Unit = {}
 ) {
     private val TAG = "P2PSocketServer"
     private var serverSocket: ServerSocket? = null

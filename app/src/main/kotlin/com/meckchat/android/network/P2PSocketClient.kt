@@ -23,9 +23,9 @@ import java.nio.charset.StandardCharsets
 
 class P2PSocketClient(
     val peerDeviceId: String,
-    private val onMessageReceived: (ChatMessage) -> Unit,
-    private val onAckReceived: (String) -> Unit,
-    private val onConnectionStateChanged: (Boolean) -> Unit
+    private val onMessageReceived: (ChatMessage) -> Unit = {},
+    private val onAckReceived: (String) -> Unit = {},
+    private val onConnectionStateChanged: (Boolean) -> Unit = {}
 ) {
     private val TAG = "P2PSocketClient[$peerDeviceId]"
     private var socket: Socket? = null
