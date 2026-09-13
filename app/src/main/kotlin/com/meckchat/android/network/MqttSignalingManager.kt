@@ -47,63 +47,36 @@ class IPv4SSLSocketFactory(
         delegate = sslContext.socketFactory
     }
 
-    override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
-    override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
-
-    override fun createSocket(): Socket = delegate.createSocket()
-
-    override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket {
-        val targetHost = if (host.isNotEmpty()) host else expectedHost
-        val socket = delegate.createSocket(s, targetHost, port, autoClose)
+    private fun configureSocket(socket: Socket): Socket {
         if (socket is SSLSocket) {
             try {
                 val params = socket.sslParameters
-                params.serverNames = listOf(SNIHostName(targetHost))
+                params.serverNames = listOf(SNIHostName(expectedHost))
                 socket.sslParameters = params
             } catch (_: Throwable) {}
         }
         return socket
     }
 
-    override fun createSocket(host: String, port: Int): Socket {
-        val targetHost = if (host.isNotEmpty()) host else expectedHost
-        val ipv4 = try {
-            val addrs = InetAddress.getAllByName(targetHost)
-            addrs.firstOrNull { it is Inet4Address } ?: addrs.firstOrNull() ?: InetAddress.getByName(targetHost)
-        } catch (_: Exception) {
-            InetAddress.getByName(targetHost)
-        }
-        val plainSocket = Socket()
-        plainSocket.connect(java.net.InetSocketAddress(ipv4, port), 30000)
-        return createSocket(plainSocket, targetHost, port, true)
-    }
+    override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
+    override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
 
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket {
-        val targetHost = if (host.isNotEmpty()) host else expectedHost
-        val ipv4 = try {
-            val addrs = InetAddress.getAllByName(targetHost)
-            addrs.firstOrNull { it is Inet4Address } ?: addrs.firstOrNull() ?: InetAddress.getByName(targetHost)
-        } catch (_: Exception) {
-            InetAddress.getByName(targetHost)
-        }
-        val plainSocket = Socket()
-        plainSocket.bind(java.net.InetSocketAddress(localHost, localPort))
-        plainSocket.connect(java.net.InetSocketAddress(ipv4, port), 30000)
-        return createSocket(plainSocket, targetHost, port, true)
-    }
+    override fun createSocket(): Socket = configureSocket(delegate.createSocket())
 
-    override fun createSocket(host: InetAddress, port: Int): Socket {
-        val plainSocket = Socket()
-        plainSocket.connect(java.net.InetSocketAddress(host, port), 30000)
-        return createSocket(plainSocket, expectedHost, port, true)
-    }
+    override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket =
+        configureSocket(delegate.createSocket(s, expectedHost, port, autoClose))
 
-    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket {
-        val plainSocket = Socket()
-        plainSocket.bind(java.net.InetSocketAddress(localAddress, localPort))
-        plainSocket.connect(java.net.InetSocketAddress(address, port), 30000)
-        return createSocket(plainSocket, expectedHost, port, true)
-    }
+    override fun createSocket(host: String, port: Int): Socket =
+        configureSocket(delegate.createSocket(expectedHost, port))
+
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
+        configureSocket(delegate.createSocket(expectedHost, port, localHost, localPort))
+
+    override fun createSocket(host: InetAddress, port: Int): Socket =
+        configureSocket(delegate.createSocket(host, port))
+
+    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket =
+        configureSocket(delegate.createSocket(address, port, localAddress, localPort))
 }
 
 class MqttSignalingManager(
@@ -172,7 +145,15 @@ class MqttSignalingManager(
         Logger.info(TAG, "MQTT initializing")
         Logger.info(TAG, "MQTT connecting to $brokerHost:$port")
 
-        val serverUri = "ssl://$brokerHost:$port"
+        val resolvedIp = try {
+            val addrs = InetAddress.getAllByName(brokerHost)
+            addrs.firstOrNull { it is Inet4Address }?.hostAddress ?: addrs.firstOrNull()?.hostAddress ?: brokerHost
+        } catch (_: Exception) {
+            brokerHost
+        }
+
+        Logger.info(TAG, "MQTT resolved $brokerHost to IPv4: $resolvedIp")
+        val serverUri = "ssl://$resolvedIp:$port"
         val clientId = "${device.deviceId}_${System.currentTimeMillis() % 100000}"
 
         try {
