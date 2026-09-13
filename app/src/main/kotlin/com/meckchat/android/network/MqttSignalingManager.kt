@@ -19,11 +19,13 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.SocketAddress
 import java.nio.charset.StandardCharsets
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 enum class ConnectionState {
@@ -32,6 +34,44 @@ enum class ConnectionState {
     CONNECTED,
     RECONNECTING,
     ERROR
+}
+
+class IPv4SSLSocketFactory(
+    private val expectedHost: String = "broker.hivemq.com"
+) : SSLSocketFactory() {
+    private val delegate: SSLSocketFactory
+
+    init {
+        val sslContext = SSLContext.getInstance("TLS")
+        sslContext.init(null, null, null)
+        delegate = sslContext.socketFactory
+    }
+
+    override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
+    override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
+
+    override fun createSocket(): Socket = delegate.createSocket()
+
+    override fun createSocket(s: Socket, host: String, port: Int, autoClose: Boolean): Socket {
+        val socket = delegate.createSocket(s, expectedHost, port, autoClose)
+        if (socket is SSLSocket) {
+            try {
+                val params = socket.sslParameters
+                params.serverNames = listOf(SNIHostName(expectedHost))
+                socket.sslParameters = params
+            } catch (_: Throwable) {}
+        }
+        return socket
+    }
+
+    override fun createSocket(host: String, port: Int): Socket = delegate.createSocket(expectedHost, port)
+
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
+        delegate.createSocket(expectedHost, port, localHost, localPort)
+
+    override fun createSocket(host: InetAddress, port: Int): Socket = delegate.createSocket(host, port)
+    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket =
+        delegate.createSocket(address, port, localAddress, localPort)
 }
 
 class MqttSignalingManager(
@@ -100,7 +140,15 @@ class MqttSignalingManager(
         Logger.info(TAG, "MQTT initializing")
         Logger.info(TAG, "MQTT connecting to $brokerHost:$port")
 
-        val serverUri = "ssl://$brokerHost:$port"
+        val resolvedIp = try {
+            val addrs = InetAddress.getAllByName(brokerHost)
+            addrs.firstOrNull { it is Inet4Address }?.hostAddress ?: addrs.firstOrNull()?.hostAddress ?: brokerHost
+        } catch (_: Exception) {
+            brokerHost
+        }
+
+        Logger.info(TAG, "MQTT resolved host $brokerHost to IP $resolvedIp")
+        val serverUri = "ssl://$resolvedIp:$port"
         val clientId = "${device.deviceId}_${System.currentTimeMillis() % 100000}"
 
         try {
@@ -140,15 +188,15 @@ class MqttSignalingManager(
                 override fun deliveryComplete(token: IMqttDeliveryToken?) {}
             })
 
-            val sslContext = SSLContext.getInstance("TLS")
-            sslContext.init(null, null, null)
-
             val options = MqttConnectOptions().apply {
                 isAutomaticReconnect = true
                 isCleanSession = true
                 connectionTimeout = 30
                 keepAliveInterval = 60
-                socketFactory = sslContext.socketFactory
+                socketFactory = IPv4SSLSocketFactory(expectedHost = brokerHost)
+                sslHostnameVerifier = HostnameVerifier { _, session ->
+                    HttpsURLConnection.getDefaultHostnameVerifier().verify(brokerHost, session)
+                }
 
                 val lwtPayload = device.toPresenceOfflineString().toByteArray(StandardCharsets.UTF_8)
                 setWill(getPresenceOfflineTopic(device.deviceId), lwtPayload, 1, false)
