@@ -14,13 +14,21 @@ class ProtocolSerializationTest {
             deviceId = "mc_android_test_123",
             displayName = "Android Pixel 8",
             platform = "android",
-            isOnline = true
+            isOnline = true,
+            endpoints = listOf(com.meckchat.android.model.Endpoint(host = "192.168.1.105", port = 7788))
         )
 
-        val jsonStr = device.toPresenceOnlineString()
-        assertTrue(jsonStr.contains("\"device_id\":\"mc_android_test_123\""))
-        assertTrue(jsonStr.contains("\"platform\":\"android\""))
-        assertTrue(jsonStr.contains("\"type\":\"presence_online\""))
+        val presenceJson = device.toPresenceOnlineString()
+        assertTrue(presenceJson.contains("\"device_id\":\"mc_android_test_123\""))
+        assertTrue(presenceJson.contains("\"platform\":\"android\""))
+        assertTrue(presenceJson.contains("\"protocol_version\":1"))
+
+        val discoveryJson = device.toDiscoveryString()
+        assertTrue(discoveryJson.contains("\"device_id\":\"mc_android_test_123\""))
+        assertTrue(discoveryJson.contains("\"device_name\":\"Android Pixel 8\""))
+        assertTrue(discoveryJson.contains("\"endpoints\""))
+        assertTrue(discoveryJson.contains("\"192.168.1.105\""))
+        assertTrue(discoveryJson.contains("7788"))
     }
 
     @Test
