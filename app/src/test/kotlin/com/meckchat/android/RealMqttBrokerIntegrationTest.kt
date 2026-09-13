@@ -6,12 +6,14 @@ import com.meckchat.android.network.ConnectionState
 import com.meckchat.android.network.MqttSignalingManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Ignore
 import org.junit.Test
 import java.util.UUID
 
 class RealMqttBrokerIntegrationTest {
 
     @Test
+    @Ignore("Integration test connecting to live public broker - disabled so CI never publishes test presence to HiveMQ")
     fun testRealHiveMqBrokerTwoDeviceSignaling() {
         val uniqueSuffix = UUID.randomUUID().toString().substring(0, 8)
         val deviceIdA = "mc_test_android_a_$uniqueSuffix"
