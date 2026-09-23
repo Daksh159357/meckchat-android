@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import com.meckchat.android.core.AppConfig
 import com.meckchat.android.model.Device
 import com.meckchat.android.network.MqttSignalingManager
+import com.meckchat.android.ui.chat.P2PChatScreen
 import com.meckchat.android.ui.screens.ChatScreen
 import com.meckchat.android.ui.screens.HomeScreen
 import com.meckchat.android.ui.theme.MeckChatTheme
@@ -39,10 +40,20 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     var selectedPeer by remember { mutableStateOf<Device?>(null) }
+                    var showWebRtcChat by remember { mutableStateOf(false) }
                     val messagesMap by signalingManager.messagesMap.collectAsState()
                     val myDeviceId = AppConfig.instance.deviceId
 
-                    if (selectedPeer != null) {
+                    if (showWebRtcChat) {
+                        BackHandler(enabled = showWebRtcChat) {
+                            showWebRtcChat = false
+                        }
+                        P2PChatScreen(
+                            onBack = {
+                                showWebRtcChat = false
+                            }
+                        )
+                    } else if (selectedPeer != null) {
                         BackHandler {
                             selectedPeer = null
                         }
@@ -65,6 +76,9 @@ class MainActivity : ComponentActivity() {
                             signalingManager = signalingManager,
                             onDeviceSelected = { device ->
                                 selectedPeer = device
+                            },
+                            onOpenWebRtcChat = {
+                                showWebRtcChat = true
                             }
                         )
                     }

@@ -51,7 +51,8 @@ import com.meckchat.android.network.P2PTransportManager
 @Composable
 fun HomeScreen(
     signalingManager: MqttSignalingManager = MqttSignalingManager.instance,
-    onDeviceSelected: (Device) -> Unit = {}
+    onDeviceSelected: (Device) -> Unit = {},
+    onOpenWebRtcChat: () -> Unit = {}
 ) {
     val connectionState by signalingManager.connectionState.collectAsState()
     val errorMessage by signalingManager.errorMessage.collectAsState()
@@ -164,6 +165,46 @@ fun HomeScreen(
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF2E7D32)
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // WebRTC P2P Chat Feature Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                ),
+                shape = RoundedCornerShape(12.dp),
+                onClick = onOpenWebRtcChat
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "WebRTC P2P Chat",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Text(
+                            text = "Room-based DataChannel cross-ISP chat via public HiveMQ signaling",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = onOpenWebRtcChat
+                    ) {
+                        Text("Open Chat")
+                    }
                 }
             }
 

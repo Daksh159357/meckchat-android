@@ -8,6 +8,11 @@ build/
 /captures
 .externalNativeBuild
 .cxx
+local.properties
+app/build/
 *.apk
 *.aab
+*.jks
+*.keystore
+keystore.properties
 output-metadata.json

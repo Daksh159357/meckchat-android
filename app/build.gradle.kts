@@ -72,6 +72,12 @@ dependencies {
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
 
+    // WebRTC + MQTT Signaling Dependencies
+    implementation("io.github.webrtc-sdk:android:125.6422.07")
+    implementation("com.hivemq:hivemq-mqtt-client:1.3.3")
+    implementation("com.google.code.gson:gson:2.10.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20231013")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
