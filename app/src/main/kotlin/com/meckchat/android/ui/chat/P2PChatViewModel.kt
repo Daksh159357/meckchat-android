@@ -16,6 +16,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.webrtc.DataChannel
 
+enum class P2PConnectionType {
+    NONE,
+    DIRECT_WEBRTC,
+    MQTT_FALLBACK
+}
+
 data class P2PChatMessage(
     val sender: String, // "You" or "Peer"
     val text: String,
@@ -25,6 +31,7 @@ data class P2PChatMessage(
 data class ChatUiState(
     val keyword: String = "",
     val status: String = "Disconnected",
+    val connectionType: P2PConnectionType = P2PConnectionType.NONE,
     val messages: List<P2PChatMessage> = emptyList(),
     val isConnected: Boolean = false,
     val isConnecting: Boolean = false
@@ -34,7 +41,7 @@ class P2PChatViewModel(application: Application) : AndroidViewModel(application)
 
     companion object {
         private const val TAG = "P2PChatViewModel"
-        private const val TIMEOUT_MILLIS = 15000L
+        private const val TIMEOUT_MILLIS = 10000L // 10-second window to establish direct P2P before falling back
     }
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -59,6 +66,7 @@ class P2PChatViewModel(application: Application) : AndroidViewModel(application)
             it.copy(
                 keyword = sanitized,
                 status = "Connecting...",
+                connectionType = P2PConnectionType.NONE,
                 isConnecting = true,
                 isConnected = false
             )
@@ -109,6 +117,7 @@ class P2PChatViewModel(application: Application) : AndroidViewModel(application)
             it.copy(
                 keyword = sanitized,
                 status = "Connecting...",
+                connectionType = P2PConnectionType.NONE,
                 isConnecting = true,
                 isConnected = false
             )
@@ -150,7 +159,19 @@ class P2PChatViewModel(application: Application) : AndroidViewModel(application)
         signalingJob?.cancel()
         signalingJob = viewModelScope.launch(Dispatchers.IO) {
             signaling.incomingSignals.collect { signal ->
-                rtcManager.handleSignalingMessage(signal)
+                val type = signal["type"] as? String
+                if (type == "chat_message") {
+                    val text = signal["text"] as? String
+                    if (!text.isNullOrBlank()) {
+                        Logger.info(TAG, "Received message over MQTT Fallback: $text")
+                        val newMsg = P2PChatMessage(sender = "Peer", text = text)
+                        _uiState.update {
+                            it.copy(messages = it.messages + newMsg)
+                        }
+                    }
+                } else {
+                    rtcManager.handleSignalingMessage(signal)
+                }
             }
         }
     }
@@ -162,30 +183,47 @@ class P2PChatViewModel(application: Application) : AndroidViewModel(application)
                 when (state) {
                     DataChannel.State.OPEN -> {
                         timeoutJob?.cancel()
+                        Logger.info(TAG, "WebRTC DataChannel OPEN: Direct P2P Connected!")
                         _uiState.update {
                             it.copy(
-                                status = "Connected (P2P)",
+                                status = "Connected (Direct P2P)",
+                                connectionType = P2PConnectionType.DIRECT_WEBRTC,
                                 isConnected = true,
                                 isConnecting = false
                             )
                         }
                     }
                     DataChannel.State.CLOSING, DataChannel.State.CLOSED -> {
-                        _uiState.update {
-                            it.copy(
-                                status = "Disconnected",
-                                isConnected = false,
-                                isConnecting = false
-                            )
+                        if (signalingService?.isConnected() == true) {
+                            Logger.info(TAG, "WebRTC closed; maintaining connection over MQTT Fallback")
+                            _uiState.update {
+                                it.copy(
+                                    status = "Connected (Cloud Fallback)",
+                                    connectionType = P2PConnectionType.MQTT_FALLBACK,
+                                    isConnected = true,
+                                    isConnecting = false
+                                )
+                            }
+                        } else {
+                            _uiState.update {
+                                it.copy(
+                                    status = "Disconnected",
+                                    connectionType = P2PConnectionType.NONE,
+                                    isConnected = false,
+                                    isConnecting = false
+                                )
+                            }
                         }
                     }
                     DataChannel.State.CONNECTING -> {
-                        _uiState.update {
-                            it.copy(
-                                status = "Connecting...",
-                                isConnected = false,
-                                isConnecting = true
-                            )
+                        if (!_uiState.value.isConnected) {
+                            _uiState.update {
+                                it.copy(
+                                    status = "Connecting...",
+                                    isConnected = false,
+                                    isConnecting = true
+                                )
+                            }
                         }
                     }
                 }
@@ -209,34 +247,64 @@ class P2PChatViewModel(application: Application) : AndroidViewModel(application)
         timeoutJob?.cancel()
         timeoutJob = viewModelScope.launch(Dispatchers.IO) {
             delay(TIMEOUT_MILLIS)
-            if (!_uiState.value.isConnected) {
-                Logger.warning(TAG, "WebRTC connection timed out after 15s")
-                _uiState.update {
-                    it.copy(
-                        status = "Could not reach peer. Try same Wi-Fi.",
-                        isConnecting = false,
-                        isConnected = false
-                    )
+            val rtc = webRtcManager
+            val isRtcOpen = rtc != null && rtc.isDataChannelOpen()
+            if (!isRtcOpen) {
+                if (signalingService?.isConnected() == true) {
+                    Logger.info(TAG, "WebRTC direct connection timed out. Falling back to MQTT Cloud Relay.")
+                    _uiState.update {
+                        it.copy(
+                            status = "Connected (Cloud Fallback)",
+                            connectionType = P2PConnectionType.MQTT_FALLBACK,
+                            isConnecting = false,
+                            isConnected = true
+                        )
+                    }
+                } else {
+                    Logger.warning(TAG, "WebRTC connection and MQTT signaling timed out")
+                    _uiState.update {
+                        it.copy(
+                            status = "Could not connect to room",
+                            connectionType = P2PConnectionType.NONE,
+                            isConnecting = false,
+                            isConnected = false
+                        )
+                    }
                 }
             }
         }
     }
 
     /**
-     * Sends message text through the WebRTC data channel and updates local message list.
+     * Sends message text through WebRTC DataChannel (Direct P2P) if open, or MQTT (Cloud Fallback).
      */
     fun sendMessage(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
 
-        val manager = webRtcManager ?: return
-        if (_uiState.value.isConnected) {
-            val sent = manager.sendMessage(trimmed)
+        val rtc = webRtcManager
+        val mqtt = signalingService
+
+        if (rtc != null && rtc.isDataChannelOpen()) {
+            val sent = rtc.sendMessage(trimmed)
             if (sent) {
+                Logger.info(TAG, "Sent message via WebRTC DataChannel: $trimmed")
                 val newMsg = P2PChatMessage(sender = "You", text = trimmed)
                 _uiState.update {
                     it.copy(messages = it.messages + newMsg)
                 }
+            }
+        } else if (mqtt != null && mqtt.isConnected()) {
+            Logger.info(TAG, "Sent message via MQTT Fallback: $trimmed")
+            val payload = mapOf(
+                "type" to "chat_message",
+                "text" to trimmed,
+                "timestamp" to System.currentTimeMillis()
+            )
+            mqtt.publishSignal(payload)
+            val newMsg = P2PChatMessage(sender = "You", text = trimmed)
+            _uiState.update {
+                it.copy(messages = it.messages + newMsg)
             }
         }
     }
@@ -259,6 +327,7 @@ class P2PChatViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update {
             it.copy(
                 status = "Disconnected",
+                connectionType = P2PConnectionType.NONE,
                 isConnected = false,
                 isConnecting = false
             )

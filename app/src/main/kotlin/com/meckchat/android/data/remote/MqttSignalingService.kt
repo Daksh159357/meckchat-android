@@ -145,6 +145,13 @@ class MqttSignalingService {
     }
 
     /**
+     * Checks if MQTT signaling client is currently connected.
+     */
+    fun isConnected(): Boolean {
+        return client?.state?.isConnected ?: false
+    }
+
+    /**
      * Disconnects from MQTT broker and cleans up resources.
      */
     fun disconnect() {

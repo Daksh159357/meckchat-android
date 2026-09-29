@@ -319,6 +319,13 @@ class WebRtcManager(
     }
 
     /**
+     * Checks if the WebRTC DataChannel is currently open and ready for P2P transmission.
+     */
+    fun isDataChannelOpen(): Boolean {
+        return dataChannel?.state() == DataChannel.State.OPEN
+    }
+
+    /**
      * Sends a text message directly through the open WebRTC DataChannel.
      */
     fun sendMessage(text: String): Boolean {

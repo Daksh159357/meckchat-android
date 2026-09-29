@@ -164,9 +164,10 @@ fun P2PChatScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = when {
-                        uiState.isConnected -> Color(0xFFE8F5E9)
+                        uiState.connectionType == P2PConnectionType.DIRECT_WEBRTC -> Color(0xFFE8F5E9)
+                        uiState.connectionType == P2PConnectionType.MQTT_FALLBACK -> Color(0xFFE1F5FE)
                         uiState.isConnecting -> Color(0xFFFFF3E0)
-                        uiState.status.contains("Could not reach", ignoreCase = true) -> Color(0xFFFFEBEE)
+                        uiState.status.contains("Could not", ignoreCase = true) -> Color(0xFFFFEBEE)
                         else -> MaterialTheme.colorScheme.surface
                     }
                 ),
@@ -179,9 +180,10 @@ fun P2PChatScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val dotColor = when {
-                        uiState.isConnected -> Color(0xFF4CAF50)
+                        uiState.connectionType == P2PConnectionType.DIRECT_WEBRTC -> Color(0xFF4CAF50)
+                        uiState.connectionType == P2PConnectionType.MQTT_FALLBACK -> Color(0xFF03A9F4)
                         uiState.isConnecting -> Color(0xFFFF9800)
-                        uiState.status.contains("Could not reach", ignoreCase = true) -> Color(0xFFE53935)
+                        uiState.status.contains("Could not", ignoreCase = true) -> Color(0xFFE53935)
                         else -> Color(0xFF9E9E9E)
                     }
 
@@ -198,9 +200,10 @@ fun P2PChatScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                         color = when {
-                            uiState.isConnected -> Color(0xFF2E7D32)
+                            uiState.connectionType == P2PConnectionType.DIRECT_WEBRTC -> Color(0xFF2E7D32)
+                            uiState.connectionType == P2PConnectionType.MQTT_FALLBACK -> Color(0xFF0277BD)
                             uiState.isConnecting -> Color(0xFFEF6C00)
-                            uiState.status.contains("Could not reach", ignoreCase = true) -> Color(0xFFC62828)
+                            uiState.status.contains("Could not", ignoreCase = true) -> Color(0xFFC62828)
                             else -> MaterialTheme.colorScheme.onSurface
                         },
                         modifier = Modifier.weight(1f)
@@ -230,7 +233,7 @@ fun P2PChatScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (uiState.isConnected) "DataChannel open. Send a message to your peer!"
+                            text = if (uiState.isConnected) "Connected! Send a message to your peer."
                             else "No messages yet. Join or create a room to connect.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.outline
