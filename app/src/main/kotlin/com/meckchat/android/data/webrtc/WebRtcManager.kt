@@ -82,12 +82,17 @@ class WebRtcManager(
     fun createPeerConnection(isCaller: Boolean) {
         val iceServers = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer()
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun3.l.google.com:19302").createIceServer()
         )
 
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            iceTransportsType = PeerConnection.IceTransportsType.ALL
+            bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
         }
 
         val observer = object : PeerConnection.Observer {
@@ -104,12 +109,20 @@ class WebRtcManager(
             }
 
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
-                Logger.info(TAG, "onIceGatheringChange: $state")
+                Logger.info(TAG, "ICE gathering state: $state")
             }
 
             override fun onIceCandidate(candidate: IceCandidate?) {
                 if (candidate != null) {
-                    Logger.info(TAG, "Discovered local ICE candidate: ${candidate.sdpMid}")
+                    val candidateType = when {
+                        candidate.sdp.contains("typ host") -> "HOST (local LAN)"
+                        candidate.sdp.contains("typ srflx") -> "SRFLX (public via STUN)"
+                        candidate.sdp.contains("typ relay") -> "RELAY (TURN)"
+                        candidate.sdp.contains("typ prflx") -> "PRFLX (peer-reflexive)"
+                        else -> "UNKNOWN"
+                    }
+                    Logger.info(TAG, "ICE candidate [$candidateType] mid=${candidate.sdpMid} sdp=${candidate.sdp}")
+
                     val candidateMap = mapOf(
                         "type" to "candidate",
                         "sdpMid" to candidate.sdpMid,
@@ -253,11 +266,18 @@ class WebRtcManager(
 
                 if (candidateSdp.isNotEmpty()) {
                     val iceCandidate = IceCandidate(sdpMid, sdpMLineIndex, candidateSdp)
+                    val candidateType = when {
+                        candidateSdp.contains("typ host") -> "HOST (local LAN)"
+                        candidateSdp.contains("typ srflx") -> "SRFLX (public via STUN)"
+                        candidateSdp.contains("typ relay") -> "RELAY (TURN)"
+                        candidateSdp.contains("typ prflx") -> "PRFLX (peer-reflexive)"
+                        else -> "UNKNOWN"
+                    }
                     if (peerConnection?.remoteDescription != null) {
-                        Logger.info(TAG, "Adding remote ICE candidate: $sdpMid")
+                        Logger.info(TAG, "Adding remote ICE candidate [$candidateType]: mid=$sdpMid sdp=$candidateSdp")
                         peerConnection?.addIceCandidate(iceCandidate)
                     } else {
-                        Logger.info(TAG, "Buffering remote ICE candidate until remote description is set")
+                        Logger.info(TAG, "Buffering remote ICE candidate [$candidateType]: mid=$sdpMid sdp=$candidateSdp until remote description is set")
                         synchronized(pendingIceCandidates) {
                             pendingIceCandidates.add(iceCandidate)
                         }
